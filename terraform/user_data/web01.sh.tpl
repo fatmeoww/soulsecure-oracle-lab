@@ -27,12 +27,15 @@ systemctl enable --now cloudbreach-web.service
 
 # ---------------------------------------------------------------------------
 # TLS: self-signed cert regenerated fresh on every boot, SAN covers both the
-# free nip.io domain and the raw public IP -- same "regenerate on start so
-# it always matches the current deployment" pattern the SoulSecure course's
-# own nginx entrypoint uses.
-# ---------------------------------------------------------------------------
+# real domain and the raw public IP -- same "regenerate on start so it
+# always matches the current deployment" pattern the SoulSecure course's
+# own nginx entrypoint uses. DOMAIN is a free DuckDNS name (see variables.tf
+# / README.md) pointed at web-01's RESERVED public IP -- unlike the earlier
+# nip.io-based version, this domain doesn't change even if the underlying
+# instance gets destroyed and recreated by a future user_data edit, since
+# the reserved IP (and therefore what DuckDNS resolves to) stays constant.
 PUBLIC_IP=$(curl -s https://checkip.amazonaws.com || echo "127.0.0.1")
-DOMAIN="soulsecure.$PUBLIC_IP.nip.io"
+DOMAIN="${duckdns_domain}"
 
 mkdir -p /etc/nginx/tls
 openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \

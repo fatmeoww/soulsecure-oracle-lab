@@ -198,9 +198,29 @@ cat /opt/meridian-internal/customer-export-notice.txt
   manual step (Certbot runs automatically in `web01.sh.tpl` on every boot);
   it was only necessary this once because this particular change was an
   in-place update, not a recreate.
-- **Current permanent address**: `https://soulsecure.140.245.110.167.nip.io/`
-  — every example below uses `<web01_domain>` as a placeholder, but as of
-  this section this specific value shouldn't change again.
+- **Migrated from the nip.io domain to a real DuckDNS name** (same date,
+  right after the above): `soulsecure.duckdns.org`, free, registered at
+  duckdns.org, A record pointed at the reserved IP. Requested purely for a
+  cleaner-looking URL (no IP visible in the hostname) — functionally
+  identical to the nip.io setup otherwise. `duckdns_domain` is now a
+  Terraform variable (`variables.tf`, default `"soulsecure.duckdns.org"`)
+  baked directly into `web01.sh.tpl` rather than self-detected via
+  `checkip.amazonaws.com`, so both the fallback self-signed cert and the
+  real Let's Encrypt cert Certbot requests on every boot use it correctly
+  from a totally fresh instance with zero manual steps — verified by
+  letting this specific change force a real web-01 recreation and watching
+  Certbot succeed automatically for `soulsecure.duckdns.org` on first boot.
+  An earlier attempt at also auto-updating the DuckDNS A record via a
+  Terraform `null_resource` + `local-exec` was reverted — Windows'
+  `cmd.exe`-based local-exec mangled the curl command's quoting (exit
+  status 3, malformed URL); not worth fighting for what's pure insurance
+  on top of the reserved IP fix, which already means the IP doesn't need
+  re-pointing under normal operation. See `compute.tf`'s comment for the
+  manual `curl .../update?...` command if the reserved IP is ever
+  genuinely reassigned.
+- **Current permanent address**: `https://soulsecure.duckdns.org/` — every
+  example below uses `<web01_domain>` as a placeholder, but as of this
+  section this specific value shouldn't change again.
 - OCI IMDS's exact `Authorization` header enforcement has changed over time
   across image/agent versions — if `Bearer Oracle` doesn't work as shown,
   check what the actual 401/403 response body from `/opc/v2/` says on your

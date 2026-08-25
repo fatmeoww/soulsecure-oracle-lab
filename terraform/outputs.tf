@@ -5,17 +5,17 @@ output "web01_public_ip" {
 
 output "web01_domain" {
   description = <<-EOT
-    Free wildcard DNS name for web-01, via nip.io (no registration, no
-    cost -- resolves automatically to whatever IP is embedded in the name).
-    Built from the RESERVED public IP, so this stays the same even when
-    web-01 gets destroyed and recreated by a source change.
+    Free DuckDNS domain for web-01 (var.duckdns_domain) -- point its A
+    record at web01_public_ip once; since that IP is RESERVED (not
+    ephemeral), it stays correct even when web-01 gets destroyed and
+    recreated by a future source change.
   EOT
-  value = "soulsecure.${oci_core_public_ip.web01.ip_address}.nip.io"
+  value = var.duckdns_domain
 }
 
 output "web01_app_url" {
   description = "HTTPS, no port -- nginx terminates TLS on 443 and proxies to the app internally. Real Let's Encrypt certificate, issued automatically on boot."
-  value       = "https://soulsecure.${oci_core_public_ip.web01.ip_address}.nip.io/"
+  value       = "https://${var.duckdns_domain}/"
 }
 
 output "ssh_to_web01" {

@@ -52,6 +52,18 @@ variable "internal01_flag" {
   default     = "fd16978f423c836c563079917db6978a"
 }
 
+variable "duckdns_domain" {
+  description = <<-EOT
+    Free DuckDNS domain pointed at web-01's reserved public IP, e.g.
+    "soulsecure.duckdns.org" -- register one at https://www.duckdns.org
+    (sign in, add a subdomain, point it at the `web01_public_ip` output).
+    Used as the CN/SAN for both the fallback self-signed cert and the real
+    Let's Encrypt certificate web01.sh.tpl requests on every boot.
+  EOT
+  type    = string
+  default = "soulsecure.duckdns.org"
+}
+
 variable "par_expiration" {
   description = <<-EOT
     RFC3339 expiration for the Pre-Authenticated Request URL that "leaks"

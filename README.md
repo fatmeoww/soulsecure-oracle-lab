@@ -161,11 +161,25 @@ terraform plan     # review what it's about to create
 terraform apply
 ```
 
+Before the first apply, register a free domain at [DuckDNS](https://www.duckdns.org)
+(sign in, add a subdomain) and set it as `duckdns_domain` in
+`terraform.tfvars` — used as the CN/SAN for both the fallback self-signed
+cert and the real Let's Encrypt cert Certbot requests automatically on
+every boot. Point its A record at the IP `terraform apply` prints as
+`web01_public_ip` (a **reserved**, not ephemeral, IP — see below — so you
+only need to do this once, ever).
+
 Takes about 2–3 minutes. Terraform prints `web01_public_ip`, `web01_domain`
-(a free [nip.io](https://nip.io) DNS name that resolves straight to that IP
-— no registration, no cost, matches the SoulSecure course's `*.soulsecure.lab`
-naming feel without needing a domain of your own), and `web01_app_url` when
-done.
+(your DuckDNS name), and `web01_app_url` when done.
+
+> Don't want to register anything, even a free DuckDNS name? Leave
+> `duckdns_domain` at anything and just use `https://<web01_public_ip>.nip.io`
+> style access instead — [nip.io](https://nip.io) resolves any
+> IP-embedded-in-the-hostname automatically, zero registration, though the
+> IP ends up visible in the URL (DuckDNS gives you a clean name instead).
+> Either way Certbot needs the domain to actually resolve to this IP to
+> issue a real cert, so pick one before relying on HTTPS working without
+> `-k`.
 
 **This IP is stable across future `terraform apply` runs**, including ones
 that force `web-01` to be destroyed and recreated (which any `user_data` /
@@ -189,9 +203,9 @@ not a bare test page. The vulnerable "Report Link Preview" tool lives under
 a low-key "Staff Tools" footer link, framed as an internal utility
 consultants use to sanity-check outbound links before they go into a client
 deliverable — see [StudentGuide.md](StudentGuide.md) for the attacker's way
-in. HTTPS only (self-signed cert, regenerated fresh on every boot with the
-current deployment's nip.io domain in the SAN) — plain HTTP on 80
-redirects to 443, nothing meaningful is served over it.
+in. HTTPS only (real Let's Encrypt certificate, reissued fresh on every
+boot for `duckdns_domain`, self-signed as a fallback if that fails) —
+plain HTTP on 80 redirects to 443, nothing meaningful is served over it.
 
 ### Verify it's up
 

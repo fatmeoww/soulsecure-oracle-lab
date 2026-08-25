@@ -62,7 +62,8 @@ resource "oci_core_instance" "web01" {
     # decoding, no extra config needed. Plain base64 alone blew past the
     # cap; this comfortably clears it.
     user_data = base64gzip(templatefile("${path.module}/user_data/web01.sh.tpl", {
-      app_content = file("${path.module}/../app/web_app.py")
+      app_content    = file("${path.module}/../app/web_app.py")
+      duckdns_domain = var.duckdns_domain
     }))
     # The deliberate misconfiguration: a presigned "recovery" URL for
     # internal-01's SSH key, stashed in instance metadata for an ops
@@ -92,6 +93,19 @@ resource "oci_core_public_ip" "web01" {
   lifetime       = "RESERVED"
   private_ip_id  = data.oci_core_private_ips.web01.private_ips[0].id
 }
+
+# ---------------------------------------------------------------------------
+# NOTE: an earlier version of this file also had a null_resource here that
+# called the DuckDNS update API automatically via local-exec whenever the
+# reserved IP changed. Dropped it -- Terraform's local-exec runs via cmd.exe
+# on Windows by default, whose quoting rules mangled the URL (`curl` exit
+# status 3, malformed URL) even though the underlying curl command is fine
+# run directly. Not worth fighting cross-shell quoting for what's pure
+# insurance anyway (the reserved IP above already means this domain doesn't
+# need re-pointing under normal operation) -- if the reserved IP is ever
+# genuinely reassigned, just re-run the update manually:
+#   curl -s "https://www.duckdns.org/update?domains=<subdomain>&token=<token>&ip=<new-ip>"
+# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # internal-01 -- private subnet, no public IP, SSH reachable only from

