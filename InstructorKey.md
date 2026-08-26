@@ -197,6 +197,51 @@ the student was assigned:
 
 ## Known limitations / honest caveats
 
+- **"Out of host capacity" — a real, sometimes multi-hour OCI Always Free
+  problem, hit directly 2026-08-26.** Recreating `web-01` after the Chain
+  B changes above failed repeatedly with `500-InternalError, Out of host
+  capacity` on `VM.Standard.E2.1.Micro` — ap-singapore-1 is a single-AD
+  region, so there's no alternate AD to fail over to within the region.
+  Switched `web-01` to `VM.Standard.A1.Flex` (`web01_instance_shape` in
+  `variables.tf`, default changed, needs its own `shape_config` block and
+  its own `data.oci_core_images` lookup since it's a different
+  architecture — see `compute.tf`) hoping for a less-contended capacity
+  pool, but **hit the identical error on A1.Flex too** — confirmed this
+  was genuinely a regional capacity crunch affecting multiple shapes at
+  once, not anything wrong with this config. `internal-01` was unaffected
+  throughout (it launched fine, on `VM.Standard.E2.1.Micro`, at a
+  different moment). 20+ retries over ~30 minutes did not clear it; this
+  can genuinely take hours to resolve on Oracle's side. If you hit this:
+  retry periodically (`reset.sh` is idempotent, safe to keep rerunning),
+  try the other shape, or as a last resort redeploy to a multi-AD region
+  and accept a new IP/domain.
+- **Also found while reset-testing that day: an orphaned boot volume from
+  `internal-01`'s very first failed launch attempt (2026-08-25) was never
+  actually deleted** — only removed from Terraform state at the time
+  (`terraform state rm`), which stops Terraform from managing it but
+  doesn't touch the real resource. It sat there for a full day silently
+  consuming one of Always Free's 2-boot-volume slots, which is *also* part
+  of why the first `reset.sh` test that day failed (compounding the host-
+  capacity issue above). Found via `oci bv boot-volume list` — anything
+  `AVAILABLE` there that isn't attached to a current instance is an
+  orphan; `oci bv boot-volume delete --boot-volume-id <id> --force` clears
+  it. **Lesson**: `terraform state rm` on a resource that partially
+  provisioned real infrastructure is not the same as that infrastructure
+  being gone — always reconcile against `oci ... list` after one, not just
+  Terraform's own state.
+- **Built `terraform/soft-reset.sh` and an hourly Windows Scheduled Task
+  specifically in response to the above** — a full instance replace
+  (`reset.sh`) is exactly the kind of operation that can hit "Out of host
+  capacity" on a bad day, which makes it a poor choice for unattended
+  hourly automation. The soft reset never calls the OCI API at all (pure
+  SSH: redeploy `app/web_app.py`, re-plant both flags, restart services),
+  so it can't fail that way, and it's fast enough to run every hour without
+  meaningfully interrupting whoever's mid-engagement. Needed
+  `internal01_admin_ssh_key` as a new sensitive output (`outputs.tf`) plus
+  two `~/.ssh/config` `Host` aliases with `ProxyJump` so the script can
+  reach `internal-01` directly from the operator's machine using the same
+  real key the intended vulnerability chain leaks — see README.md's
+  "Automatic hourly reset" section for the exact one-time setup.
 - **Chain B (command injection) added and live-verified 2026-08-26** —
   built specifically so a second student/team member gets a genuinely
   different vulnerability class to exercise instead of redoing Chain A's

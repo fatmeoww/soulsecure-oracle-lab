@@ -11,8 +11,22 @@ data "oci_core_images" "ubuntu" {
   sort_order               = "DESC"
 }
 
+# Separate image lookup for web-01's own shape (see web01_instance_shape --
+# defaults to the ARM64 VM.Standard.A1.Flex, a different capacity pool from
+# internal01's VM.Standard.E2.1.Micro, so it needs its own AMD/ARM-matched
+# image rather than reusing data.oci_core_images.ubuntu above).
+data "oci_core_images" "web01" {
+  compartment_id           = var.compartment_ocid
+  operating_system         = "Canonical Ubuntu"
+  operating_system_version = "22.04"
+  shape                    = var.web01_instance_shape
+  sort_by                  = "TIMECREATED"
+  sort_order               = "DESC"
+}
+
 locals {
   ubuntu_image_id       = data.oci_core_images.ubuntu.images[0].id
+  web01_image_id         = data.oci_core_images.web01.images[0].id
   availability_domain    = data.oci_identity_availability_domains.ads.availability_domains[0].name
   internal01_key_par_url = "https://objectstorage.${var.region}.oraclecloud.com${oci_objectstorage_preauthrequest.internal01_key_par.access_uri}"
 }
@@ -28,14 +42,17 @@ locals {
 resource "oci_core_instance" "web01" {
   compartment_id      = var.compartment_ocid
   availability_domain = local.availability_domain
-  shape                = var.instance_shape
+  shape                = var.web01_instance_shape
   display_name         = "cloudbreach-web01"
 
-  # VM.Standard.E2.1.Micro is a fixed shape (1/8 OCPU, 1GB -- not a
-  # ".Flex" shape), so no shape_config block is needed or accepted here.
-  # If you switch instance_shape to a flex shape (e.g. VM.Standard.A1.Flex,
-  # also Always Free eligible), add a shape_config { ocpus = ...
-  # memory_in_gbs = ... } block back in.
+  # web01_instance_shape defaults to VM.Standard.A1.Flex, a ".Flex" shape,
+  # which requires this block (unlike internal01's fixed VM.Standard.E2.1.Micro
+  # below, which doesn't accept one at all). 1 OCPU / 6GB is comfortably
+  # inside the Always Free A1 allowance (up to 4 OCPU / 24GB total).
+  shape_config {
+    ocpus         = 1
+    memory_in_gbs = 6
+  }
 
   create_vnic_details {
     subnet_id                = oci_core_subnet.public.id
@@ -51,7 +68,7 @@ resource "oci_core_instance" "web01" {
 
   source_details {
     source_type = "image"
-    source_id   = local.ubuntu_image_id
+    source_id   = local.web01_image_id
   }
 
   metadata = {

@@ -33,6 +33,22 @@ variable "admin_ssh_public_key" {
   type = string
 }
 
+variable "web01_instance_shape" {
+  description = <<-EOT
+    web-01's shape, separate from instance_shape (used by internal-01) so
+    the two can be switched independently. Defaults to
+    VM.Standard.A1.Flex (Ampere/ARM, Always Free eligible, up to 4 OCPU /
+    24GB total across instances) rather than VM.Standard.E2.1.Micro --
+    E2.1.Micro capacity in single-AD regions like ap-singapore-1 can run
+    genuinely dry ("Out of host capacity" on LaunchInstance, not a config
+    bug), sometimes for hours; A1.Flex draws from a separate capacity pool
+    that's often available when E2 isn't. Needs its own shape_config block
+    below (E2.1.Micro doesn't, being a fixed, non-Flex shape).
+  EOT
+  type    = string
+  default = "VM.Standard.A1.Flex"
+}
+
 variable "instance_shape" {
   description = <<-EOT
     Always Free eligible shape. VM.Standard.E2.1.Micro is the simplest

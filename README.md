@@ -235,15 +235,108 @@ you're rebuilding after an app-code change, or just want a clean slate.
 
 ---
 
+## Keeping it game-ready: resetting between players
+
+Leave both instances running permanently and let players get into
+whatever state they get into (including breaking things via the
+vulnerabilities on purpose) — reset back to a clean, game-ready state
+whenever you need to, in two different ways:
+
+### Soft reset (fast, no OCI API calls, can't hit capacity errors)
+
+`terraform/soft-reset.sh` — re-deploys `app/web_app.py`, re-plants both
+flag files, restarts the app + nginx, all via plain SSH. Doesn't touch the
+underlying instances, TLS certs, or anything OCI-API-side at all, so it's
+safe to run constantly and can't ever fail with "Out of host capacity" the
+way creating a new instance can (see InstructorKey.md's Known Limitations
+for what that error looks like and how common it is on Always Free).
+Covers the common case: a player deleted a flag file, or left the app in a
+broken state after poking around post-RCE.
+
+**One-time setup:**
+```bash
+# 1. Extract internal-01's real SSH key for operator use (same key the
+#    intended chain leaks -- legitimate here since you own the Terraform state)
+cd terraform
+terraform output -raw internal01_admin_ssh_key > ~/.ssh/cloudbreach_internal01_admin
+chmod 600 ~/.ssh/cloudbreach_internal01_admin
+
+# 2. Add these two Host aliases to ~/.ssh/config (adjust IPs if yours differ):
+cat >> ~/.ssh/config <<'EOF'
+
+Host cloudbreach-web01
+  HostName <web01_public_ip>
+  User ubuntu
+  IdentityFile ~/.ssh/cloudbreach_admin
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+
+Host cloudbreach-internal01
+  HostName <internal01_private_ip>
+  User ubuntu
+  IdentityFile ~/.ssh/cloudbreach_internal01_admin
+  ProxyJump cloudbreach-web01
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+EOF
+```
+
+Then just run it whenever: `bash terraform/soft-reset.sh`
+
+### Hard reset (full instance replace — the nuclear option)
+
+`terraform/reset.sh` — real `terraform apply -replace=...` against
+`oci_core_instance.web01`/`internal01`. Use this only if a box is broken
+badly enough that SSH itself stopped responding (soft reset can't help
+there). Slower (~1 minute per instance), and — as this range's own
+Known Limitations document — can occasionally hit OCI's "Out of host
+capacity" error on Always Free shapes in busy regions; retry if so.
+
+```bash
+bash terraform/reset.sh              # reset both instances
+bash terraform/reset.sh web01        # just web-01
+bash terraform/reset.sh internal01   # just internal-01
+```
+
+### Automatic hourly reset (Windows Task Scheduler)
+
+So you never have to remember to reset it yourself, schedule the soft
+reset to run every hour:
+
+```powershell
+$action = New-ScheduledTaskAction -Execute "C:\Program Files\Git\bin\bash.exe" `
+  -Argument "-lc '/path/to/CloudBreach-Range/terraform/soft-reset.sh >> /path/to/CloudBreach-Range/terraform/soft-reset.log 2>&1'"
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
+  -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd `
+  -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+Register-ScheduledTask -TaskName "CloudBreachRangeSoftReset" -Action $action `
+  -Trigger $trigger -Settings $settings `
+  -Description "Hourly soft-reset of CloudBreach Range" -Force
+```
+
+Check on it any time with `Get-ScheduledTask -TaskName CloudBreachRangeSoftReset
+| Get-ScheduledTaskInfo`, or remove it with `Unregister-ScheduledTask
+-TaskName CloudBreachRangeSoftReset`. Logs land in
+`terraform/soft-reset.log` next to the script.
+
+On macOS/Linux, the equivalent is a cron entry:
+```
+0 * * * * /path/to/CloudBreach-Range/terraform/soft-reset.sh >> /path/to/CloudBreach-Range/terraform/soft-reset.log 2>&1
+```
+
+---
+
 ## Files
 
 ```
 CloudBreach-Range/
 ├── README.md              # this file
 ├── StudentGuide.md         # attacker-path walkthrough (spoiler-light)
+├── Walkthrough-TH.md       # full step-by-step playthrough (Thai)
 ├── InstructorKey.md        # ground truth: exact commands, flags, rubric
 ├── app/
-│   └── web_app.py           # the vulnerable Flask app (real SSRF bug)
+│   └── web_app.py           # the vulnerable Flask app (SSRF + command injection)
 └── terraform/
     ├── versions.tf
     ├── variables.tf
@@ -252,6 +345,8 @@ CloudBreach-Range/
     ├── compute.tf               # the two Compute instances
     ├── outputs.tf
     ├── terraform.tfvars.example
+    ├── reset.sh                 # hard reset: full instance replace
+    ├── soft-reset.sh             # soft reset: re-deploy app + flags via SSH
     └── user_data/
         ├── web01.sh.tpl         # installs + starts the Flask app
         └── internal01.sh.tpl    # plants the flag
