@@ -3,30 +3,40 @@
 CloudBreach Range -- web-01, the public site of "SoulSecure Inc."
 
 A deliberately vulnerable Flask app for a real-cloud (OCI) pentest range.
-This is NOT a mock -- it is a genuine SSRF vulnerability that, running on a
-real OCI Compute instance, lets an attacker reach the real instance metadata
-service (169.254.169.254, same link-local address OCI and AWS both use) and
-pull real instance metadata -- including whatever an operator carelessly
-stashed there (see InstructorKey.md).
+This is NOT a mock -- both vulnerabilities below are genuine, running on a
+real OCI Compute instance.
 
 In-fiction: SoulSecure Inc. is the same cybersecurity consultancy behind the
 mocked SoulSecure training course -- this range is presented as SoulSecure's
-own public site, carrying a real internal tool (the "Report Link Preview"
-staff utility) that consultants use to sanity-check outbound links before
-they go into a client deliverable. That tool is where the SSRF lives.
+own public site, carrying two real internal tools under "Staff Tools" that
+happen to each carry a different, unrelated bug -- two independent chains
+to the same eventual goal (a shell on internal-01), not one chain with two
+steps.
 
-Vulnerability: /preview fetches an attacker-supplied URL server-side with no
-allow-list, no scheme restriction, no block on the 169.254.169.254
-link-local metadata range, and (realistically -- plenty of real "link
-checker" tools do this) lets the caller pass custom headers through
-untouched, which happens to be exactly what's needed to satisfy OCI IMDS
-v2's `Authorization: Bearer Oracle` requirement.
+Vulnerability 1 (Flag 1) -- SSRF in /preview: fetches an attacker-supplied
+URL server-side with no allow-list, no scheme restriction, no block on the
+169.254.169.254 link-local metadata range, and (realistically -- plenty of
+real "link checker" tools do this) lets the caller pass custom headers
+through untouched, which happens to be exactly what's needed to satisfy OCI
+IMDS v2's `Authorization: Bearer Oracle` requirement -- leading to the same
+carelessly-stashed presigned Object Storage URL described in InstructorKey.md.
+
+Vulnerability 2 (Flag 2) -- OS command injection in /tools/lookup: builds a
+`whois` shell command via plain string formatting under `shell=True` instead
+of an argument list, so a domain value like `example.com; id` runs `id` as
+a second command. A real shell on web-01, not a read-only SSRF primitive --
+and since cloudbreach-web.service runs as root (see user_data/web01.sh.tpl),
+this is full root RCE. From there, an attacker can reach the same
+backup_recovery_url via a plain local `curl` (no header-forwarding trick
+needed once you have a real shell) and pivot into internal-01 the same way
+Flag 1's chain does -- same destination, genuinely different route.
 
 Do not deploy this anywhere reachable by anyone other than intended lab
 students. See ../README.md for network/IAM scoping that makes this safe to
 run as a real internet-facing service for a training range.
 """
 import json
+import subprocess
 from urllib.parse import urlparse
 
 import requests
@@ -669,17 +679,27 @@ def staff():
 <div class="wrap">
   <section class="hero">
     <p class="eyebrow">Internal — Staff Tools</p>
-    <h1>Report Link Preview</h1>
-    <p class="lede">Consultants use this before a link goes into a client
-    deliverable — paste it in, confirm it resolves to what you think it
-    does, catch a typo'd domain before a client does.</p>
+    <h1>Internal utilities</h1>
+    <p class="lede">Small tools the consulting team uses day to day.
+    Nothing client-facing lives here.</p>
   </section>
   <section class="block prose">
-    <p>Open the tool: <a href="/preview?url=https://example.com">/preview</a></p>
+    <h2>Report Link Preview</h2>
+    <p>Consultants use this before a link goes into a client deliverable —
+    paste it in, confirm it resolves to what you think it does, catch a
+    typo'd domain before a client does. Open the tool:
+    <a href="/preview?url=https://example.com">/preview</a></p>
     <p>Pass <code>url=</code> with the link to check. Some legacy partner
     integrations occasionally need a custom header forwarded through — the
     tool accepts an optional <code>headers=</code> parameter as a JSON
     object for that case.</p>
+  </section>
+  <section class="block prose">
+    <h2>Domain Intel Lookup</h2>
+    <p>Quick WHOIS/DNS lookup during the recon phase of an engagement, so
+    nobody has to leave the browser to check who owns a target domain.
+    Open the tool: <a href="/tools/lookup?domain=example.com">/tools/lookup</a></p>
+    <p>Pass <code>domain=</code> with the domain to look up.</p>
   </section>
 </div>
 """
@@ -760,6 +780,64 @@ def preview():
 </div>
 """
     return layout("Report Link Preview", body, active="")
+
+
+@app.route("/tools/lookup")
+def tools_lookup():
+    """
+    "Domain Intel Lookup" -- internal tool: runs `whois` on a domain during
+    the recon phase of an engagement. Real feature pattern (plenty of
+    internal recon tooling shells out to whois/dig/nslookup rather than
+    reimplementing those protocols) -- the bug is building the shell
+    command by string-formatting the user's input directly into a
+    `shell=True` call instead of passing an argument list, which is
+    exactly the classic OS command injection anti-pattern. A domain value
+    like `example.com; id` runs `id` as a second command.
+
+    Deliberately a different vulnerability class from /preview's SSRF --
+    this one hands an attacker a real shell on web-01 directly, rather
+    than a read-only server-side-request primitive.
+    """
+    domain = request.args.get("domain", "").strip()
+    result_html = ""
+    if domain:
+        try:
+            proc = subprocess.run(
+                f"whois {domain}",
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=6,
+            )
+            output = (proc.stdout or "") + (proc.stderr or "")
+            result_html = (
+                f'<div class="result"><span class="status">Ran: whois {domain}</span>'
+                f"{output[:4000] or '(no output)'}</div>"
+            )
+        except Exception as e:
+            result_html = f'<div class="result"><span class="status">Lookup failed</span>{e}</div>'
+
+    body = f"""
+<div class="wrap">
+  <section class="hero">
+    <p class="eyebrow">Internal — Staff Tools</p>
+    <h1>Domain Intel Lookup</h1>
+    <p class="lede">Quick WHOIS lookup for a domain you're scoping during
+    the recon phase of an engagement.</p>
+  </section>
+  <section class="block">
+    <div class="tool-panel">
+      <form method="get" action="/tools/lookup">
+        <label for="domain">Domain</label>
+        <input type="text" id="domain" name="domain" value="{domain}" placeholder="example.com">
+        <button type="submit" class="btn primary" style="border:none;cursor:pointer;">Look up</button>
+      </form>
+      {result_html}
+    </div>
+  </section>
+</div>
+"""
+    return layout("Domain Intel Lookup", body, active="")
 
 
 if __name__ == "__main__":

@@ -64,6 +64,7 @@ resource "oci_core_instance" "web01" {
     user_data = base64gzip(templatefile("${path.module}/user_data/web01.sh.tpl", {
       app_content    = file("${path.module}/../app/web_app.py")
       duckdns_domain = var.duckdns_domain
+      flag2          = var.web01_flag2
     }))
     # The deliberate misconfiguration: a presigned "recovery" URL for
     # internal-01's SSH key, stashed in instance metadata for an ops

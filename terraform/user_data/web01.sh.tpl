@@ -1,12 +1,20 @@
 #!/bin/bash
 set -e
 apt-get update -y
-apt-get install -y python3-pip nginx openssl
+apt-get install -y python3-pip nginx openssl whois
 pip3 install --quiet flask requests
 
 cat > /opt/web_app.py <<'CLOUDBREACH_APP_PY_EOF_MARKER'
 ${app_content}
 CLOUDBREACH_APP_PY_EOF_MARKER
+
+# Flag 2 -- the command-injection chain's proof of RCE. Deliberately just
+# a plain file (readable by root, which is who the app runs as -- see the
+# service unit below); nothing about *reading* it is the interesting part,
+# reaching a position to run `cat` at all is.
+cat > /opt/flag2.txt <<'FLAG2EOF'
+flag{${flag2}}
+FLAG2EOF
 
 cat > /etc/systemd/system/cloudbreach-web.service <<'UNIT'
 [Unit]
@@ -86,9 +94,10 @@ netfilter-persistent save
 
 # ---------------------------------------------------------------------------
 # Upgrade to a real Let's Encrypt certificate, best-effort. Works because
-# nip.io domains resolve for real and port 80 is deliberately world-open
-# in network.tf (ACME HTTP-01 validation needs that, not just allowed_cidr)
-# -- see that file's comment for why. Falls back to the self-signed cert
+# DOMAIN really resolves to this box (DuckDNS A record -- see README.md's
+# Setup section) and port 80 is deliberately world-open in network.tf (ACME
+# HTTP-01 validation needs that, not just allowed_cidr) -- see that file's
+# comment for why. Falls back to the self-signed cert
 # above if this fails for any reason (rate limit, DNS propagation lag,
 # transient network issue) rather than failing the whole boot.
 # ---------------------------------------------------------------------------

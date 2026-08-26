@@ -2,17 +2,24 @@
 
 A small, **genuinely real** cloud attack range — not a mock/simulation like
 the SoulSecure course. Two real Compute instances on **Oracle Cloud
-Infrastructure (OCI)**, a real instance-metadata misconfiguration, a real
-SSRF vulnerability, and real lateral movement between machines. Built with
-Terraform so it's reproducible and fully destroyable, and designed to sit
-on **OCI's Always Free tier — genuinely $0/month, indefinitely**, not a
-12-month trial.
+Infrastructure (OCI)**, a real instance-metadata misconfiguration, real
+lateral movement between machines, and **two independent, unrelated
+vulnerabilities** (not the same bug twice) so different people can each get
+a genuinely different exercise. Built with Terraform so it's reproducible
+and fully destroyable, and designed to sit on **OCI's Always Free tier —
+genuinely $0/month, indefinitely**, not a 12-month trial.
 
-**Kill chain**: SSRF on a public web app → reach the real OCI instance
-metadata service → find a careless "backup recovery" URL stashed in that
-metadata → follow it to a presigned Object Storage link holding a real SSH
-private key → use that key to pivot from the public machine into a second,
-private-subnet-only machine.
+**Chain A (Flag 1) — SSRF**: SSRF on a public web app → reach the real OCI
+instance metadata service → find a careless "backup recovery" URL stashed
+in that metadata → follow it to a presigned Object Storage link holding a
+real SSH private key → use that key to pivot from the public machine into
+a second, private-subnet-only machine.
+
+**Chain B (Flag 2) — OS command injection**: a different internal tool on
+the same site shells out to `whois` by string-formatting user input into a
+`shell=True` call → real remote code execution, running as root → reach
+the same metadata leak directly (no SSRF trick needed once you have a real
+shell) → same pivot, same destination, completely different route in.
 
 This is a **separate range from the SoulSecure course** — same spirit
 (realistic misconfigurations, chained exploitation), but running on your own
@@ -103,12 +110,13 @@ SSM Parameter Store. OCI's equivalents exist but work differently:
                  │   Public subnet       │
                  │   10.0.1.0/24         │
                  │  ┌─────────────────┐  │
-                 │  │  web-01          │  │   nginx (443, self-signed cert)
+                 │  │  web-01          │  │   nginx (443, real TLS cert)
                  │  │  (public IP)     │  │   -> Flask app on 127.0.0.1:5000
-                 │  │                  │  │   SSRF vuln in /preview
-                 │  │  instance meta:  │  │   "backup_recovery_url" ->
-                 │  │  PAR leak        │  │   presigned Object Storage link
-                 │  └────────┬────────┘  │
+                 │  │                  │  │   Flag 1: SSRF in /preview
+                 │  │  instance meta:  │  │   Flag 2: cmd injection in
+                 │  │  PAR leak        │  │     /tools/lookup (real root RCE)
+                 │  │                  │  │   both reach "backup_recovery_url"
+                 │  └────────┬────────┘  │   (presigned Object Storage link)
                  └───────────┼───────────┘
                               │ NSG-scoped SSH only
                  ┌────────────▼──────────┐

