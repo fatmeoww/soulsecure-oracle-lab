@@ -327,6 +327,46 @@ On macOS/Linux, the equivalent is a cron entry:
 
 ---
 
+## Moving to a different account or region
+
+This range has already been moved once for real — `ap-singapore-1` ran out
+of Always Free host capacity ("Out of host capacity" on `LaunchInstance`)
+for hours, so it was redeployed fresh in a second tenancy whose home
+region is `ap-tokyo-1`. If you hit the same wall:
+
+1. **A tenancy's subscribed-region list has a hard cap on Always Free
+   accounts.** Trying to subscribe your *existing* tenancy to a second
+   region (`oci iam region-subscription create`) will likely fail with
+   `TenantCapacityExceeded` — that's not fixable via the API. The real
+   fix is a **second, new OCI tenancy** with your target region set as
+   its home region during signup.
+2. Generate a new API signing key for that tenancy and add it as a
+   **named profile** in the *same* `~/.oci/config` your original profile
+   lives in (e.g. `[TOKYO]` alongside `[DEFAULT]`) — the Terraform `oci`
+   provider only ever reads that one fixed file path, ignoring
+   `$OCI_CLI_CONFIG_FILE` (unlike the `oci` CLI itself), so this is the
+   only way to give Terraform a second identity to authenticate as.
+3. Set `oci_config_profile = "<your profile name>"` in `terraform.tfvars`
+   alongside the new `region` and a fresh `compartment_ocid` (the new
+   tenancy's own root compartment).
+4. **Back up, don't reuse, your old `terraform.tfstate`/`terraform.tfvars`**
+   (e.g. rename with a `.old-account-backup` suffix) — state from one
+   tenancy means nothing applied against a different one. Start fresh.
+5. After a clean `terraform apply`: re-point your DuckDNS A record at the
+   new `web01_public_ip`, re-extract `internal01_admin_ssh_key` (it's a
+   brand new key), and update the two `HostName`s in your
+   `~/.ssh/config` aliases. `soft-reset.sh` itself needs no changes — it
+   was written to use those aliases rather than hardcoded IPs specifically
+   so a migration like this wouldn't require touching it.
+6. If a shape hits "Out of host capacity" in the *new* region too (it can
+   — this happened moving to Tokyo as well, on `VM.Standard.A1.Flex`
+   specifically, even though `VM.Standard.E2.1.Micro` launched fine
+   seconds earlier), just switch `web01_instance_shape` to whichever
+   shape just proved it had capacity. See InstructorKey.md's Known
+   Limitations for the full blow-by-blow of this exact migration.
+
+---
+
 ## Files
 
 ```

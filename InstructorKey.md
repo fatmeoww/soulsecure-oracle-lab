@@ -197,6 +197,56 @@ the student was assigned:
 
 ## Known limitations / honest caveats
 
+- **Migrated the entire range from `ap-singapore-1` to a second tenancy in
+  `ap-tokyo-1`, 2026-08-27** — after ~50 retries across roughly 2 hours,
+  `ap-singapore-1`'s "Out of host capacity" (see below) never cleared.
+  Singapore is a single-AD region with no in-region failover, and OCI
+  Always Free tenancies have a hard cap on subscribed regions (attempting
+  `oci iam region-subscription create` on the *existing* tenancy failed
+  with `TenantCapacityExceeded` — not something fixable via the API, it's
+  a genuine account-level limit), so the only real fix was standing up a
+  **second, brand-new OCI tenancy** with `ap-tokyo-1` as its home region.
+  What this actually involved, for anyone hitting the same wall:
+  1. New tenancy, new API signing key (`~/.oci/oci_api_key_tokyo.pem`),
+     added as a **named profile** (`[TOKYO]`) in the *same*
+     `~/.oci/config` the original `[DEFAULT]` (Singapore) profile lives
+     in — necessary because, unlike the `oci` CLI, the Terraform `oci`
+     provider does **not** honor `$OCI_CLI_CONFIG_FILE`; it only ever
+     reads the fixed `~/.oci/config` path, selecting a profile via its
+     own `config_file_profile` argument. Added `oci_config_profile` as a
+     new Terraform variable (default `"DEFAULT"`) specifically for this.
+  2. Backed up (renamed, did **not** delete) the Singapore
+     `terraform.tfstate`/`terraform.tfvars` — this range's Terraform
+     state is tenancy-specific, so reusing it against a different
+     tenancy would have been meaningless at best. Started completely
+     fresh state for Tokyo in the same `terraform/` directory.
+  3. New `terraform.tfvars`: `region = "ap-tokyo-1"`,
+     `oci_config_profile = "TOKYO"`, a fresh `compartment_ocid` (the new
+     tenancy's own root OCID), same `admin_ssh_public_key` (SSH keys
+     aren't tenancy-scoped, reused as-is), current `allowed_cidr` (had
+     drifted again — dynamic home IP, same gotcha as before).
+  4. Deployed clean: `internal-01` (`VM.Standard.E2.1.Micro`) launched
+     first-try in Tokyo. `web-01` on `VM.Standard.A1.Flex` immediately
+     hit **the same "Out of host capacity" error, in the new region** —
+     confirming this really is a per-shape capacity thing, not specific
+     to Singapore. Switched `web01_instance_shape` to
+     `VM.Standard.E2.1.Micro` (matching `internal-01`, which had just
+     proven that shape had capacity) — needed `compute.tf`'s
+     `shape_config` block converted from unconditional to a `dynamic`
+     block (`for_each = strcontains(var.web01_instance_shape, "Flex") ?
+     [1] : []`), since fixed shapes reject that block outright. Launched
+     clean on retry.
+  5. New public IP (`161.33.201.199`), so: re-pointed the DuckDNS A
+     record, re-extracted `internal01_admin_ssh_key` (new key, new
+     tenancy), updated the `cloudbreach-web01`/`cloudbreach-internal01`
+     `~/.ssh/config` `HostName`s to the new IPs — `soft-reset.sh` itself
+     needed **no changes**, since it was already written to use those
+     config aliases rather than hardcoded IPs (see its own comments).
+  6. Live-verified both chains end-to-end on the new deployment
+     (including a full `soft-reset.sh` run) before considering this done.
+  The original Singapore VCN/`internal-01` were left alone (not
+  destroyed) — Always Free, no cost to leave idle, and Singapore capacity
+  may well recover on its own someday if ever needed again.
 - **"Out of host capacity" — a real, sometimes multi-hour OCI Always Free
   problem, hit directly 2026-08-26.** Recreating `web-01` after the Chain
   B changes above failed repeatedly with `500-InternalError, Out of host
@@ -373,7 +423,10 @@ the student was assigned:
   genuinely reassigned.
 - **Current permanent address**: `https://soulsecure.duckdns.org/` — every
   example below uses `<web01_domain>` as a placeholder, but as of this
-  section this specific value shouldn't change again.
+  section this specific value shouldn't change again. (This domain now
+  points at the `ap-tokyo-1` deployment's reserved IP, `161.33.201.199`,
+  not the original Singapore one — see the region-migration entry above.
+  Same domain throughout, only the A record's target changed.)
 - OCI IMDS's exact `Authorization` header enforcement has changed over time
   across image/agent versions — if `Bearer Oracle` doesn't work as shown,
   check what the actual 401/403 response body from `/opc/v2/` says on your

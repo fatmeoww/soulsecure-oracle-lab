@@ -3,6 +3,20 @@ variable "region" {
   type        = string
 }
 
+variable "oci_config_profile" {
+  description = <<-EOT
+    Profile name in ~/.oci/config to authenticate with -- lets this same
+    Terraform code target a different OCI account/tenancy entirely (not
+    just a different region within one account) by adding a new named
+    section to ~/.oci/config and pointing this at it, e.g. "TOKYO" after
+    creating a second tenancy whose home region is ap-tokyo-1. Defaults to
+    "DEFAULT", the profile name oci-cli itself uses when you don't specify
+    one.
+  EOT
+  type    = string
+  default = "DEFAULT"
+}
+
 variable "compartment_ocid" {
   description = <<-EOT
     OCID of the compartment to deploy into. Using your tenancy's root

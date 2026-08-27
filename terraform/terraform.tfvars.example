@@ -2,7 +2,14 @@
 # terraform.tfvars is gitignored -- never commit it, it can contain your
 # real IP and SSH public key.
 
-region = "ap-singapore-1"    # pick whatever region you set up during OCI signup
+region = "ap-tokyo-1"    # pick whatever region you set up during OCI signup
+
+# Only needed if you're using a non-DEFAULT profile in ~/.oci/config --
+# e.g. after moving this range to a second tenancy because your first
+# region ran out of Always Free host capacity (see README.md's "Moving to
+# a different account or region"). Leave commented out if you only have
+# one profile.
+# oci_config_profile = "TOKYO"
 
 # Find with: oci iam compartment list --compartment-id-in-subtree true
 # (your tenancy's root compartment OCID is fine for a personal account)
@@ -23,5 +30,9 @@ admin_ssh_public_key = "ssh-ed25519 AAAA...your-public-key-here... you@yourhost"
 duckdns_domain = "soulsecure.duckdns.org"
 
 # Optional overrides (defaults shown):
-# instance_shape  = "VM.Standard.E2.1.Micro"
-# par_expiration  = "2030-01-01T00:00:00Z"
+# instance_shape       = "VM.Standard.E2.1.Micro"   # internal-01's shape
+# web01_instance_shape = "VM.Standard.A1.Flex"       # web-01's shape --
+#   switch this (and instance_shape) if either one hits "Out of host
+#   capacity" on LaunchInstance; pick whatever shape just proved it had
+#   capacity for the other instance.
+# par_expiration       = "2030-01-01T00:00:00Z"

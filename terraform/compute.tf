@@ -45,13 +45,18 @@ resource "oci_core_instance" "web01" {
   shape                = var.web01_instance_shape
   display_name         = "cloudbreach-web01"
 
-  # web01_instance_shape defaults to VM.Standard.A1.Flex, a ".Flex" shape,
-  # which requires this block (unlike internal01's fixed VM.Standard.E2.1.Micro
-  # below, which doesn't accept one at all). 1 OCPU / 6GB is comfortably
-  # inside the Always Free A1 allowance (up to 4 OCPU / 24GB total).
-  shape_config {
-    ocpus         = 1
-    memory_in_gbs = 6
+  # shape_config is only valid/required for ".Flex" shapes (e.g.
+  # VM.Standard.A1.Flex) -- fixed shapes like VM.Standard.E2.1.Micro don't
+  # accept it at all, so this block is conditional on web01_instance_shape
+  # actually being a Flex shape. 1 OCPU / 6GB is comfortably inside the
+  # Always Free A1 allowance (up to 4 OCPU / 24GB total) on the occasions
+  # web01_instance_shape is set to an A1 shape.
+  dynamic "shape_config" {
+    for_each = strcontains(var.web01_instance_shape, "Flex") ? [1] : []
+    content {
+      ocpus         = 1
+      memory_in_gbs = 6
+    }
   }
 
   create_vnic_details {

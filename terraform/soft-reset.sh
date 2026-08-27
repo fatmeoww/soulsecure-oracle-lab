@@ -36,6 +36,12 @@
 #      exact block to add.
 set -e
 
+# Uses the cloudbreach-web01 / cloudbreach-internal01 aliases from
+# ~/.ssh/config (see README.md's setup section) rather than hardcoded IPs,
+# so moving the range to a different account/region (as happened once
+# already -- ap-singapore-1 ran out of Always Free host capacity, moved to
+# a second tenancy in ap-tokyo-1) only ever needs that one config file
+# updated, not this script.
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FLAG2="e2f73445060fd21acbe97b6794dfbea2"
 FLAG1="fd16978f423c836c563079917db6978a"
