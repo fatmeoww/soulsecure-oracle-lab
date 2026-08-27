@@ -146,15 +146,67 @@ cp /opt/pristine/flag2.txt /opt/flag2.txt
 systemctl restart cloudbreach-web
 systemctl restart nginx
 
+# ${internal01_host} is internal-01's internal DNS name, not a baked-in
+# private IP -- resolves correctly via the VCN's own DNS resolver even if
+# internal-01 gets replaced (new private IP) without web-01 also being
+# redeployed. See local.internal01_dns_fqdn in compute.tf.
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 \
-  -i /root/.ssh/internal01_key ubuntu@${internal01_private_ip} '
+  -i /root/.ssh/internal01_key ubuntu@${internal01_host} '
   printf "flag{${flag1}}\n" > /home/ubuntu/flag.txt
   sudo mkdir -p /opt/meridian-internal
   printf "Internal note: nightly customer export job still points at the old backup\nhost. Ops ticket MERI-4471 opened to fix. -- J\n" | sudo tee /opt/meridian-internal/customer-export-notice.txt > /dev/null
 '
 echo "[$(date)] range reset complete"
+
+# Immediately confirm the range is actually back in a playable state,
+# rather than just assuming the steps above worked -- see
+# check-readiness.sh, run and logged separately below.
+/opt/check-readiness.sh
 RESETEOF
 chmod 700 /opt/reset-range.sh
+
+# ---------------------------------------------------------------------------
+# Readiness check -- verifies (not just assumes) the range is actually
+# playable after each reset: web-01's own app/nginx, AND internal-01 (the
+# "infra" box), checked remotely over the same DNS name/network path
+# reset-range.sh itself uses. Also runnable on demand
+# (`ssh cloudbreach-web01 sudo /opt/check-readiness.sh`) without waiting for
+# the next hourly cron firing.
+# ---------------------------------------------------------------------------
+cat > /opt/check-readiness.sh <<'READYEOF'
+#!/bin/bash
+# Does NOT use `set -e` -- every check should run and get reported even if
+# an earlier one fails, so a single bad check doesn't hide the others.
+ok=1
+check() {
+  if eval "$2" >/dev/null 2>&1; then
+    echo "  [OK]   $1"
+  else
+    echo "  [FAIL] $1"
+    ok=0
+  fi
+}
+
+echo "[$(date)] readiness check:"
+check "cloudbreach-web.service active"   "systemctl is-active --quiet cloudbreach-web"
+check "nginx.service active"             "systemctl is-active --quiet nginx"
+check "app responds on 127.0.0.1:5000"   "curl -fsS --max-time 5 http://127.0.0.1:5000/health"
+check "site responds over local HTTPS"   "curl -fsSk --max-time 5 https://127.0.0.1/health"
+check "/etc/cron.d/cloudbreach-reset present" "[ -s /etc/cron.d/cloudbreach-reset ]"
+# internal-01 checks run remotely, over the same DNS name (not a baked IP)
+# and network path (web-01's NSG) the reset script itself uses -- this is
+# the "infra" half of the readiness check.
+check "internal-01 reachable via SSH"    "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -i /root/.ssh/internal01_key ubuntu@${internal01_host} true"
+check "internal-01 Flag 1 present"       "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -i /root/.ssh/internal01_key ubuntu@${internal01_host} '[ -s /home/ubuntu/flag.txt ]'"
+check "internal-01 notes file present"   "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 -i /root/.ssh/internal01_key ubuntu@${internal01_host} '[ -s /opt/meridian-internal/customer-export-notice.txt ]'"
+
+if [ "$ok" -eq 1 ]; then
+  echo "[$(date)] READY -- range is playable"
+else
+  echo "[$(date)] NOT READY -- see failed checks above"
+fi
+READYEOF
+chmod 700 /opt/check-readiness.sh
 
 # NOTE: originally installed via `crontab -` (piping a heredoc into the
 # crontab command). That silently produced an EMPTY crontab on two separate

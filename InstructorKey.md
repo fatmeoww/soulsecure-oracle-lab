@@ -197,6 +197,68 @@ the student was assigned:
 
 ## Known limitations / honest caveats
 
+- **Removed the last hardcoded/baked-in private IP from the whole range,
+  2026-08-27, and added a `check-readiness.sh` health check alongside the
+  hourly reset.** Prompted by wanting to never again be caught out by an
+  IP changing underneath the range (as literally happened during the
+  Tokyo migration below, and every time `internal-01` gets replaced on its
+  own via `reset.sh internal01`). What changed:
+  1. **internal-01 now has a stable internal DNS name.** Added
+     `hostname_label = "internal01"` + `assign_private_dns_record = true`
+     to its VNIC (`network.tf`'s VCN/subnets already had `dns_label`s set:
+     `cloudbreach` / `private`). Together these resolve as
+     `internal01.private.cloudbreach.oraclevcn.com` from anywhere inside
+     the VCN (i.e. from `web-01`) — a new `local.internal01_dns_fqdn` in
+     `compute.tf`, built from the actual subnet/VCN `dns_label`s rather
+     than typed out by hand, so it can't drift from what OCI assigns.
+  2. **`web-01`'s own `reset-range.sh`/`check-readiness.sh` now SSH to
+     internal-01 by that DNS name, not a private IP baked in at web-01's
+     own boot time** (`compute.tf` no longer passes
+     `internal01_private_ip` into the `user_data` template at all — a new
+     `internal01_host` template var carries the DNS name instead). This
+     was the fragility that actually mattered: previously, if
+     `internal-01` was ever replaced without also redeploying `web-01`,
+     web-01's baked-in IP would go stale and every hourly reset would
+     silently start failing to reach it.
+  3. Removing the `oci_core_instance.internal01.private_ip` reference from
+     web-01's config also removed the *implicit* Terraform dependency that
+     used to guarantee internal-01 existed before web-01's first-boot
+     reset attempt ran. Made that ordering explicit instead:
+     `depends_on = [oci_core_instance.internal01]` on the `web01` resource.
+  4. Added `internal01_dns_name` as a new Terraform output, and updated the
+     operator's own `~/.ssh/config`: the `cloudbreach-web01` alias's
+     `HostName` is now `soulsecure.duckdns.org` (was the raw reserved IP),
+     and `cloudbreach-internal01`'s is now the internal DNS name (was the
+     raw private IP) — DNS resolution for the latter happens on the jump
+     host (`web-01`, inside the VCN), not on the operator's own machine.
+  5. **New `/opt/check-readiness.sh` on `web-01`**, run automatically at
+     the end of every `reset-range.sh` invocation (so once at boot, then
+     hourly via the same cron entry) and runnable on demand. Checks, and
+     reports OK/FAIL per item rather than just assuming: both local
+     services active, the app answering locally over HTTP and HTTPS,
+     `/etc/cron.d/cloudbreach-reset` actually present, and — over the same
+     DNS name/NSG path the reset script itself uses — that internal-01 is
+     SSH-reachable and both Flag 1 and the notes file are present there.
+     Logs a final `READY`/`NOT READY` line to the same
+     `/var/log/cloudbreach-reset.log`.
+  6. This forced replacing **both** instances at once (the VNIC/DNS change
+     on internal-01, the `user_data` change on web-01) — a real, if small,
+     re-run of the exact capacity risk this whole redesign exists to guard
+     against. Checked current instance state first (`terraform state
+     show` — both `RUNNING` on `VM.Standard.E2.1.Micro` in `ap-tokyo-1`,
+     confirming that shape currently has capacity there) before applying;
+     went through cleanly with no capacity errors. internal-01's private IP
+     did change as a direct result (`10.0.2.203` → `10.0.2.178`) — living
+     proof of exactly the fragility this fix removes. Also, predictably,
+     burned another Let's Encrypt certificate slot on the already-rate-
+     limited `web-01` (see the entry below) — expected, harmless, falls
+     back to the self-signed cert as always.
+  7. Live-verified end-to-end afterward: `check-readiness.sh` reported all
+     8 checks OK and `READY`; both Chain A and Chain B flags still
+     reachable; the operator's own `~/.ssh/config` (DNS-based now) works
+     for both the direct `cloudbreach-web01` hop and the
+     `cloudbreach-internal01` pivot through it; `terraform plan` shows no
+     drift afterward.
 - **Moved the hourly reset entirely onto `web-01` itself via cron,
   2026-08-27 — the operator-machine approach (Windows Task Scheduler +
   `soft-reset.sh`) turned out to be fundamentally unreliable and was

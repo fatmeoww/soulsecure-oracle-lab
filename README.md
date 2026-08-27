@@ -256,13 +256,28 @@ the whole range hourly with no outside help:
 - `/opt/reset-range.sh` — restores the pristine app files, restarts
   `cloudbreach-web`/`nginx`, then SSHes to `internal-01` over the same
   NSG-permitted path (`web01_ingress_ssh` → `internal01_ingress_ssh_from_web01`)
-  to re-plant Flag 1 and the notes file.
+  to re-plant Flag 1 and the notes file, then runs `check-readiness.sh`
+  (below) and logs its verdict.
 - `/etc/cron.d/cloudbreach-reset` — `0 * * * * root /opt/reset-range.sh
   >> /var/log/cloudbreach-reset.log 2>&1`. Written as a plain
   `/etc/cron.d/` file rather than installed via the `crontab` command —
   the latter goes through PAM and was found to fail silently this early in
   a cloud-init boot (see InstructorKey.md's Known Limitations for the full
   story of how that was diagnosed).
+- `/opt/check-readiness.sh` — checks (rather than assumes) that the range
+  is actually playable: `cloudbreach-web`/`nginx` active, the app
+  responding locally over HTTP and HTTPS, the cron file present, and —
+  over the same DNS name and network path `reset-range.sh` itself uses —
+  that `internal-01` is SSH-reachable with both Flag 1 and the notes file
+  in place. Prints an OK/FAIL line per check and a final `READY`/`NOT
+  READY` verdict.
+
+None of this reaches `internal-01` by a baked-in private IP — it uses
+internal-01's own internal DNS name (`internal01.private.cloudbreach.
+oraclevcn.com`, built from the VCN/subnet `dns_label`s already set in
+`network.tf`), so it keeps working even if `internal-01` is ever replaced
+on its own (`reset.sh internal01`) and comes back with a different
+private IP. See `terraform output internal01_dns_name`.
 
 Nothing to set up — it's live the moment `terraform apply` finishes.
 Check on it any time:
@@ -270,10 +285,11 @@ Check on it any time:
 ssh cloudbreach-web01 "sudo tail -20 /var/log/cloudbreach-reset.log"
 ssh cloudbreach-web01 "cat /etc/cron.d/cloudbreach-reset"
 ```
-Or trigger an off-cycle reset immediately, without waiting for the next
-hourly firing:
+Or trigger an off-cycle reset, or just a readiness check, immediately
+without waiting for the next hourly firing:
 ```bash
-ssh cloudbreach-web01 "sudo /opt/reset-range.sh"
+ssh cloudbreach-web01 "sudo /opt/reset-range.sh"        # reset + readiness check
+ssh cloudbreach-web01 "sudo /opt/check-readiness.sh"    # readiness check only
 ```
 
 An earlier design ran this same logic from the *operator's* machine
@@ -339,11 +355,16 @@ region is `ap-tokyo-1`. If you hit the same wall:
    (e.g. rename with a `.old-account-backup` suffix) — state from one
    tenancy means nothing applied against a different one. Start fresh.
 5. After a clean `terraform apply`: re-point your DuckDNS A record at the
-   new `web01_public_ip`, re-extract `internal01_admin_ssh_key` (it's a
-   brand new key), and update the two `HostName`s in your
-   `~/.ssh/config` aliases. `soft-reset.sh` itself needs no changes — it
-   was written to use those aliases rather than hardcoded IPs specifically
-   so a migration like this wouldn't require touching it.
+   new `web01_public_ip`, and re-extract `internal01_admin_ssh_key` (it's
+   a brand new key). Your `~/.ssh/config` aliases need **no edits at
+   all** — `cloudbreach-web01`'s `HostName` is already the DuckDNS domain
+   (not an IP), and `cloudbreach-internal01`'s is internal-01's internal
+   DNS name (`internal01.private.cloudbreach.oraclevcn.com`), which comes
+   back identical after a fresh deploy since it's derived from the same
+   `dns_label`s in `network.tf`/`compute.tf`, not anything tenancy-
+   specific. `soft-reset.sh` itself also needs no changes, for the same
+   reason. This is exactly the scenario the no-hardcoded-IP redesign (see
+   InstructorKey.md's Known Limitations) was built for.
 6. If a shape hits "Out of host capacity" in the *new* region too (it can
    — this happened moving to Tokyo as well, on `VM.Standard.A1.Flex`
    specifically, even though `VM.Standard.E2.1.Micro` launched fine

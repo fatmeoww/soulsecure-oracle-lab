@@ -24,8 +24,21 @@ output "ssh_to_web01" {
 }
 
 output "internal01_private_ip" {
-  description = "internal-01's private IP -- only reachable from inside the VCN (i.e. from web-01)"
+  description = "internal-01's private IP right now -- only reachable from inside the VCN (i.e. from web-01). Reference only: web-01's own reset/readiness tooling addresses internal-01 by internal01_dns_name instead, precisely so it doesn't need updating if this IP ever changes."
   value       = oci_core_instance.internal01.private_ip
+}
+
+output "internal01_dns_name" {
+  description = <<-EOT
+    internal-01's stable internal DNS name (resolves only from inside the
+    VCN, i.e. from web-01) -- what web-01's reset-range.sh/check-readiness.sh
+    actually use to reach it, instead of a baked-in private IP. Also the
+    right value to use as the HostName in an operator ~/.ssh/config
+    `cloudbreach-internal01` entry (with `ProxyJump cloudbreach-web01`),
+    so that config keeps working even if internal-01 is ever replaced on
+    its own and comes back with a different private IP.
+  EOT
+  value = local.internal01_dns_fqdn
 }
 
 output "internal01_admin_ssh_key" {
