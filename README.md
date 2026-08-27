@@ -239,90 +239,76 @@ you're rebuilding after an app-code change, or just want a clean slate.
 
 Leave both instances running permanently and let players get into
 whatever state they get into (including breaking things via the
-vulnerabilities on purpose) — reset back to a clean, game-ready state
-whenever you need to, in two different ways:
+vulnerabilities on purpose) — the range resets itself back to a clean,
+game-ready state automatically, every hour, with **no dependency on any
+operator machine being on or reachable**.
 
-### Soft reset (fast, no OCI API calls, can't hit capacity errors)
+### Automatic hourly reset (built into web-01, on by default)
 
-`terraform/soft-reset.sh` — re-deploys `app/web_app.py`, re-plants both
-flag files, restarts the app + nginx, all via plain SSH. Doesn't touch the
-underlying instances, TLS certs, or anything OCI-API-side at all, so it's
-safe to run constantly and can't ever fail with "Out of host capacity" the
-way creating a new instance can (see InstructorKey.md's Known Limitations
-for what that error looks like and how common it is on Always Free).
-Covers the common case: a player deleted a flag file, or left the app in a
-broken state after poking around post-RCE.
+`web-01` provisions itself, on every boot, with everything needed to reset
+the whole range hourly with no outside help:
 
-**One-time setup:**
+- `/opt/pristine/` — a clean copy of `app/web_app.py` and `flag2.txt`,
+  captured at boot time.
+- `/root/.ssh/internal01_key` — a real, root-only (600) copy of
+  `internal-01`'s admin SSH key, baked in via Terraform (same key the
+  intended vulnerability chain itself leaks — not a special backdoor).
+- `/opt/reset-range.sh` — restores the pristine app files, restarts
+  `cloudbreach-web`/`nginx`, then SSHes to `internal-01` over the same
+  NSG-permitted path (`web01_ingress_ssh` → `internal01_ingress_ssh_from_web01`)
+  to re-plant Flag 1 and the notes file.
+- `/etc/cron.d/cloudbreach-reset` — `0 * * * * root /opt/reset-range.sh
+  >> /var/log/cloudbreach-reset.log 2>&1`. Written as a plain
+  `/etc/cron.d/` file rather than installed via the `crontab` command —
+  the latter goes through PAM and was found to fail silently this early in
+  a cloud-init boot (see InstructorKey.md's Known Limitations for the full
+  story of how that was diagnosed).
+
+Nothing to set up — it's live the moment `terraform apply` finishes.
+Check on it any time:
 ```bash
-# 1. Extract internal-01's real SSH key for operator use (same key the
-#    intended chain leaks -- legitimate here since you own the Terraform state)
-cd terraform
-terraform output -raw internal01_admin_ssh_key > ~/.ssh/cloudbreach_internal01_admin
-chmod 600 ~/.ssh/cloudbreach_internal01_admin
-
-# 2. Add these two Host aliases to ~/.ssh/config (adjust IPs if yours differ):
-cat >> ~/.ssh/config <<'EOF'
-
-Host cloudbreach-web01
-  HostName <web01_public_ip>
-  User ubuntu
-  IdentityFile ~/.ssh/cloudbreach_admin
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-
-Host cloudbreach-internal01
-  HostName <internal01_private_ip>
-  User ubuntu
-  IdentityFile ~/.ssh/cloudbreach_internal01_admin
-  ProxyJump cloudbreach-web01
-  StrictHostKeyChecking no
-  UserKnownHostsFile /dev/null
-EOF
+ssh cloudbreach-web01 "sudo tail -20 /var/log/cloudbreach-reset.log"
+ssh cloudbreach-web01 "cat /etc/cron.d/cloudbreach-reset"
+```
+Or trigger an off-cycle reset immediately, without waiting for the next
+hourly firing:
+```bash
+ssh cloudbreach-web01 "sudo /opt/reset-range.sh"
 ```
 
-Then just run it whenever: `bash terraform/soft-reset.sh`
+An earlier design ran this same logic from the *operator's* machine
+instead (a `soft-reset.sh` script + a Windows Scheduled Task calling it
+hourly over SSH). It worked fine run by hand, but failed almost every
+unattended run (`scp: Connection closed` right after auth — see
+InstructorKey.md), and depended on that one machine being powered on and
+reachable anyway. That approach was dropped in favor of the on-box cron
+above. `terraform/soft-reset.sh` is still in the repo purely as a manual,
+ad-hoc tool (e.g. force a reset from your own machine without SSHing in
+yourself) — it is **not** wired to any scheduler anymore. If you want it
+for that, the one-time setup is: extract `internal01_admin_ssh_key` via
+`terraform output -raw internal01_admin_ssh_key > ~/.ssh/cloudbreach_internal01_admin`
+(`chmod 600` it), and add `cloudbreach-web01`/`cloudbreach-internal01`
+`Host` aliases to `~/.ssh/config` (`ProxyJump cloudbreach-web01` for the
+internal one) — then just `bash terraform/soft-reset.sh` whenever.
 
 ### Hard reset (full instance replace — the nuclear option)
 
 `terraform/reset.sh` — real `terraform apply -replace=...` against
 `oci_core_instance.web01`/`internal01`. Use this only if a box is broken
-badly enough that SSH itself stopped responding (soft reset can't help
-there). Slower (~1 minute per instance), and — as this range's own
-Known Limitations document — can occasionally hit OCI's "Out of host
-capacity" error on Always Free shapes in busy regions; retry if so.
+badly enough that SSH itself stopped responding (the hourly cron reset
+can't help there, since it also runs over SSH). Slower (~1 minute per
+instance), and — as this range's own Known Limitations document — can
+occasionally hit OCI's "Out of host capacity" error on Always Free shapes
+in busy regions; retry if so. Also worth knowing: since this replaces the
+instance, it requests a fresh Let's Encrypt cert every time — Let's
+Encrypt's rate limit is 5 certs/week per domain, so don't lean on this for
+routine resets (the hourly cron reset never touches the instance or its
+cert at all, so it's unaffected).
 
 ```bash
 bash terraform/reset.sh              # reset both instances
 bash terraform/reset.sh web01        # just web-01
 bash terraform/reset.sh internal01   # just internal-01
-```
-
-### Automatic hourly reset (Windows Task Scheduler)
-
-So you never have to remember to reset it yourself, schedule the soft
-reset to run every hour:
-
-```powershell
-$action = New-ScheduledTaskAction -Execute "C:\Program Files\Git\bin\bash.exe" `
-  -Argument "-lc '/path/to/CloudBreach-Range/terraform/soft-reset.sh >> /path/to/CloudBreach-Range/terraform/soft-reset.log 2>&1'"
-$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) `
-  -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd `
-  -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
-Register-ScheduledTask -TaskName "CloudBreachRangeSoftReset" -Action $action `
-  -Trigger $trigger -Settings $settings `
-  -Description "Hourly soft-reset of CloudBreach Range" -Force
-```
-
-Check on it any time with `Get-ScheduledTask -TaskName CloudBreachRangeSoftReset
-| Get-ScheduledTaskInfo`, or remove it with `Unregister-ScheduledTask
--TaskName CloudBreachRangeSoftReset`. Logs land in
-`terraform/soft-reset.log` next to the script.
-
-On macOS/Linux, the equivalent is a cron entry:
-```
-0 * * * * /path/to/CloudBreach-Range/terraform/soft-reset.sh >> /path/to/CloudBreach-Range/terraform/soft-reset.log 2>&1
 ```
 
 ---
@@ -386,7 +372,7 @@ CloudBreach-Range/
     ├── outputs.tf
     ├── terraform.tfvars.example
     ├── reset.sh                 # hard reset: full instance replace
-    ├── soft-reset.sh             # soft reset: re-deploy app + flags via SSH
+    ├── soft-reset.sh             # manual/ad-hoc reset via SSH (auto reset is on-box cron now)
     └── user_data/
         ├── web01.sh.tpl         # installs + starts the Flask app
         └── internal01.sh.tpl    # plants the flag

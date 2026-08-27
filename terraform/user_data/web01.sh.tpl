@@ -103,3 +103,78 @@ netfilter-persistent save
 # ---------------------------------------------------------------------------
 apt-get install -y certbot python3-certbot-nginx || true
 certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "admin@$DOMAIN" --redirect || true
+
+# ---------------------------------------------------------------------------
+# Hourly self-reset, entirely local to this box -- no dependency on the
+# operator's own machine at all. An earlier design ran this from a Windows
+# laptop via Task Scheduler + SSH; it worked interactively but failed
+# unattended (scp closing the connection right after auth when launched
+# non-interactively under the Scheduler, root cause never pinned down --
+# see InstructorKey.md) and depended on that one machine being on and its
+# SSH client behaving consistently. Cron on web-01 itself sidesteps both
+# problems, and doubles as this range's actual answer to "what if a player
+# breaks something" long-term.
+#
+# Keeps a pristine copy of the app + Flag 2 right here (restored every
+# hour), and a real copy of internal-01's SSH key (root-only, 600) so this
+# box can re-plant Flag 1 + the notes file on internal-01 directly, over
+# the exact same network path (web-01's NSG -> internal-01) the intended
+# vulnerability chain itself uses -- not a special backdoor, just this
+# box's own private key alongside the one the leaked PAR hands an attacker.
+# ---------------------------------------------------------------------------
+apt-get install -y cron openssh-client || true
+# Give the cron package a moment to finish registering its binary/service
+# before relying on it -- hit a one-time race on a real deploy where
+# `crontab -` silently did nothing immediately after `apt-get install cron`
+# (worked fine seconds later, manually). Cheap insurance either way.
+sleep 3
+
+mkdir -p /opt/pristine /root/.ssh
+cp /opt/web_app.py /opt/pristine/web_app.py
+cp /opt/flag2.txt /opt/pristine/flag2.txt
+
+cat > /root/.ssh/internal01_key <<'INTERNAL01KEYEOF'
+${internal01_ssh_key}
+INTERNAL01KEYEOF
+chmod 600 /root/.ssh/internal01_key
+
+cat > /opt/reset-range.sh <<'RESETEOF'
+#!/bin/bash
+set -e
+cp /opt/pristine/web_app.py /opt/web_app.py
+cp /opt/pristine/flag2.txt /opt/flag2.txt
+systemctl restart cloudbreach-web
+systemctl restart nginx
+
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=8 \
+  -i /root/.ssh/internal01_key ubuntu@${internal01_private_ip} '
+  printf "flag{${flag1}}\n" > /home/ubuntu/flag.txt
+  sudo mkdir -p /opt/meridian-internal
+  printf "Internal note: nightly customer export job still points at the old backup\nhost. Ops ticket MERI-4471 opened to fix. -- J\n" | sudo tee /opt/meridian-internal/customer-export-notice.txt > /dev/null
+'
+echo "[$(date)] range reset complete"
+RESETEOF
+chmod 700 /opt/reset-range.sh
+
+# NOTE: originally installed via `crontab -` (piping a heredoc into the
+# crontab command). That silently produced an EMPTY crontab on two separate
+# real boots in a row, `sleep 3` after the package install included -- ruled
+# out as a package-readiness race by manually re-running the exact same
+# `crontab -` pipeline over SSH seconds after boot, which worked immediately.
+# The `crontab` command goes through PAM (pam_loginuid in particular), which
+# can misbehave this early in a cloud-init boot before a normal login
+# session exists -- writing straight to /etc/cron.d/ instead bypasses the
+# `crontab` binary and its PAM path entirely; cron reads files there
+# directly, no login session required. Standard practice for provisioning
+# cron jobs from boot scripts/config management for exactly this reason.
+cat > /etc/cron.d/cloudbreach-reset <<'CRONEOF'
+0 * * * * root /opt/reset-range.sh >> /var/log/cloudbreach-reset.log 2>&1
+CRONEOF
+chmod 644 /etc/cron.d/cloudbreach-reset
+systemctl enable --now cron
+systemctl restart cron
+echo "cron install check: $(cat /etc/cron.d/cloudbreach-reset)"
+
+# Run it once now too, so a fresh boot starts from a verified-clean state
+# rather than waiting up to an hour for the first cron firing.
+/opt/reset-range.sh >> /var/log/cloudbreach-reset.log 2>&1 || true

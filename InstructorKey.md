@@ -197,6 +197,76 @@ the student was assigned:
 
 ## Known limitations / honest caveats
 
+- **Moved the hourly reset entirely onto `web-01` itself via cron,
+  2026-08-27 — the operator-machine approach (Windows Task Scheduler +
+  `soft-reset.sh`) turned out to be fundamentally unreliable and was
+  dropped.** What happened, in order:
+  1. `soft-reset.sh` (pure SSH, no OCI API calls — see the still-earlier
+     entry below) worked correctly every time it was run **interactively**.
+     Wired up via `Register-ScheduledTask` (hourly, `bash.exe -lc '...'`)
+     it failed almost every unattended run with `scp: Connection closed`
+     immediately after SSH auth — see `terraform/soft-reset.log`, which
+     shows this failing on more than a dozen consecutive hourly firings.
+     Reproduced the exact same failure running the identical command
+     non-interactively by hand (so not Task-Scheduler-specific after all),
+     tried exporting `HOME` explicitly in case git-bash's non-login shell
+     was the issue — didn't fix it. Root cause never fully pinned down.
+  2. Decision made to stop fighting the operator machine and move the
+     whole mechanism onto `web-01` itself: a root crontab entry that
+     restores pristine copies of `app/web_app.py` and `flag2.txt`, restarts
+     the app + nginx, then **SSHes to `internal-01` using a real copy of
+     its own admin key** (baked into the instance at `/root/.ssh/
+     internal01_key`, 600 perms, via new `internal01_ssh_key`/
+     `internal01_private_ip`/`flag1` template variables in `compute.tf`)
+     to re-plant Flag 1 and the notes file — same NSG-permitted network
+     path the intended vulnerability chain itself uses, just with a
+     legitimately-held key instead of one obtained via SSRF/RCE. See
+     `terraform/user_data/web01.sh.tpl`'s final block.
+  3. First live boot of this design: the boot-time reset ran successfully
+     (confirmed via `/var/log/cloudbreach-reset.log` showing a completed
+     run, including a successful pivot to `internal-01`) — but `sudo
+     crontab -l` came back **completely empty** right after boot. Assumed
+     a race between `apt-get install -y cron` finishing and the immediate
+     `( crontab -l; echo ... ) | crontab -` pipeline; added a `sleep 3`
+     after the install as a precaution and redeployed to test the fix.
+  4. **The `sleep 3` fix did not help — identical empty-crontab result on
+     the very next boot.** Diagnostic: manually re-ran the exact same
+     `crontab -` pipeline over SSH seconds after that boot, and it worked
+     immediately — ruling out any package-readiness race (cron was already
+     installed and `active` by that point). The real difference is that
+     `crontab -l`/`crontab -` go through PAM (`pam_loginuid` in
+     particular), which can misbehave early in a cloud-init boot before a
+     normal login session exists — an interactive SSH session has one,
+     cloud-init's own script execution doesn't.
+  5. **Fix: write directly to `/etc/cron.d/cloudbreach-reset`** (a plain
+     file, `0 * * * * root /opt/reset-range.sh ...`) instead of piping
+     through the `crontab` command at all — cron reads `/etc/cron.d/`
+     files directly, no PAM-gated binary involved. This is also just
+     standard practice for provisioning cron jobs from boot
+     scripts/config management for exactly this reason. Redeployed a
+     third time and confirmed the file exists correctly immediately after
+     boot (`ls -la /etc/cron.d/cloudbreach-reset` right after `cloud-init
+     status` reported `done`) — this is the version that shipped.
+  6. Unregistered the now-obsolete Windows Scheduled Task
+     (`Unregister-ScheduledTask -TaskName "CloudBreachRangeSoftReset"`).
+     `soft-reset.sh` itself is kept in the repo as a manual/ad-hoc tool
+     (e.g. to force an immediate reset from the operator's machine without
+     waiting for the next hourly cron firing) but is no longer any
+     scheduled automation's entry point.
+  7. **Side effect of three `web-01` redeploys in one day: hit Let's
+     Encrypt's real rate limit** ("too many certificates (5) already
+     issued for this exact set of identifiers in the last 168h0m0s") on
+     the third one, since every redeploy's `certbot --nginx` line requests
+     a fresh cert for the same `duckdns_domain`. Not a bug — `web01.sh.tpl`
+     already treats the Certbot line as best-effort (`|| true`) specifically
+     for cases like this, so the box fell back to serving its self-signed
+     cert (still fully functional over HTTPS, just untrusted by default —
+     confirmed both chains still work end-to-end with `curl -k`). Will
+     silently re-obtain a real cert on the next redeploy after the rate
+     limit window clears (~2026-08-28 06:12 UTC per the error's
+     `Retry-After`). **Takeaway: don't redeploy `web-01` more than a
+     couple of times in the same week if you want to keep a trusted cert
+     — the reserved IP means you rarely need to anyway.**
 - **Migrated the entire range from `ap-singapore-1` to a second tenancy in
   `ap-tokyo-1`, 2026-08-27** — after ~50 retries across roughly 2 hours,
   `ap-singapore-1`'s "Out of host capacity" (see below) never cleared.

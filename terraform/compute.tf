@@ -84,9 +84,12 @@ resource "oci_core_instance" "web01" {
     # decoding, no extra config needed. Plain base64 alone blew past the
     # cap; this comfortably clears it.
     user_data = base64gzip(templatefile("${path.module}/user_data/web01.sh.tpl", {
-      app_content    = file("${path.module}/../app/web_app.py")
-      duckdns_domain = var.duckdns_domain
-      flag2          = var.web01_flag2
+      app_content           = file("${path.module}/../app/web_app.py")
+      duckdns_domain        = var.duckdns_domain
+      flag2                 = var.web01_flag2
+      flag1                 = var.internal01_flag
+      internal01_private_ip = oci_core_instance.internal01.private_ip
+      internal01_ssh_key    = tls_private_key.internal01.private_key_pem
     }))
     # The deliberate misconfiguration: a presigned "recovery" URL for
     # internal-01's SSH key, stashed in instance metadata for an ops
