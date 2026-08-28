@@ -91,8 +91,8 @@ resource "oci_core_network_security_group_security_rule" "web01_ingress_http" {
   # addresses all over the world, not just allowed_cidr, and need this to
   # issue and (every ~60 days) renew a real trusted certificate. This is
   # the standard, low-risk pattern any public HTTPS site using Let's
-  # Encrypt follows -- 443 (the actual app/content) stays scoped to
-  # allowed_cidr below, unchanged.
+  # Encrypt follows -- 443 (the actual app/content) is also world-open, see
+  # web01_ingress_https below for why.
   source_type = "CIDR_BLOCK"
   source      = "0.0.0.0/0"
   tcp_options {
@@ -107,8 +107,20 @@ resource "oci_core_network_security_group_security_rule" "web01_ingress_https" {
   network_security_group_id = oci_core_network_security_group.web01.id
   direction                 = "INGRESS"
   protocol                  = "6"
-  source_type                = "CIDR_BLOCK"
-  source                     = var.allowed_cidr
+  # World-open, not scoped to allowed_cidr -- this range is meant for a
+  # whole team to play, not just the operator, and allowed_cidr is a
+  # single CIDR (one home/office IP, or a small static set at best). A
+  # teammate connecting from a different IP got a silent "site can't be
+  # reached" the one time this was still scoped to allowed_cidr (SYN just
+  # dropped, no response -- indistinguishable from a real outage without
+  # checking server-side health first, see InstructorKey.md). The app
+  # itself is deliberately the thing being attacked in this exercise, so
+  # exposing it publicly isn't adding real risk beyond what the range
+  # already intends. SSH (22, below) stays scoped to allowed_cidr --
+  # that's genuine operator/admin access, not part of the intended
+  # player-facing surface.
+  source_type = "CIDR_BLOCK"
+  source      = "0.0.0.0/0"
   tcp_options {
     destination_port_range {
       min = 443

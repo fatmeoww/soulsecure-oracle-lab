@@ -197,6 +197,19 @@ the student was assigned:
 
 ## Known limitations / honest caveats
 
+- **443 opened to the world (`0.0.0.0/0`), no longer scoped to
+  `allowed_cidr`, 2026-08-28** — direct fallout from the incident just
+  below: a team member trying to play got a silent "site can't be
+  reached" because `allowed_cidr` is a single CIDR (the operator's own
+  home IP), and 443 was still scoped to it. `allowed_cidr` was never
+  going to scale to "however many teammates want to play, from wherever
+  they are" without constant manual upkeep — and unlike SSH (still scoped
+  to `allowed_cidr`, genuine operator/admin access), the web app is
+  *meant* to be attacked by whoever's playing, so exposing it publicly
+  isn't adding real risk beyond what the range already intends (same
+  reasoning port 80 was already world-open for, for ACME). Just a
+  `network.tf` NSG-rule change (`web01_ingress_https.source`), applied
+  with `terraform apply` — no instance impact, live-verified afterward.
 - **`allowed_cidr` drift caused a real "is the range down?" scare,
   2026-08-27 — turned out to be nothing wrong with the range at all.**
   The operator's home IP had changed again (dynamic ISP IP, the same

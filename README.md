@@ -55,9 +55,14 @@ tenancies that go **fully idle** for an extended period. Log into the OCI
 console occasionally and this won't be an issue for an actively-used
 practice range.
 
-**Scope discipline**: `allowed_cidr` (see Setup below) restricts both of
-web-01's open ports to only your own IP — this range is not meant to sit
-open to the whole internet. Widen it only if you deliberately want that.
+**Scope discipline**: `allowed_cidr` (see Setup below) restricts SSH (22)
+on both instances to your own IP — that's genuine operator/admin access,
+kept tight on purpose. HTTP/HTTPS (80/443) on web-01 are deliberately
+world-open instead: this range is meant for a whole team to play from
+wherever they are, and the app itself is the thing being attacked, so
+exposing it publicly isn't adding real risk beyond what the range already
+intends (started out scoped to `allowed_cidr` too, but that silently
+locked out anyone who wasn't the operator — see InstructorKey.md).
 
 ---
 
@@ -100,7 +105,8 @@ SSM Parameter Store. OCI's equivalents exist but work differently:
 ```
                          Internet
                             │
-                      (allowed_cidr only)
+                80/443 open to everyone (players);
+                  22 restricted to allowed_cidr
                             │
                     ┌───────▼────────┐
                     │  Internet GW    │
@@ -204,6 +210,10 @@ that documentation go stale on the next unrelated code change.
 curl -s https://checkip.amazonaws.com
 # use the result as "<that-ip>/32"
 ```
+This only scopes SSH (22) — your genuine operator/admin access. HTTP/HTTPS
+(80/443) are deliberately world-open instead, so teammates can play from
+wherever they are without needing their IP added anywhere; see the "Scope
+discipline" note above.
 
 web-01 serves as SoulSecure Inc.'s own public site — Home, About, Team, and
 a Work/portfolio page, styled and written like a real consultancy's site,
@@ -353,15 +363,21 @@ almost always something else, most commonly:
   renewal timer to renew) — once the rate-limit window has passed, either
   redeploy `web-01` again or just re-run Certbot directly over SSH:
   `ssh cloudbreach-web01 "sudo certbot --nginx -d soulsecure.duckdns.org --non-interactive --agree-tos -m admin@soulsecure.duckdns.org --redirect"`.
-- **Can't reach the site (timeout) from your own machine, but
-  `check-readiness.sh` says READY**: your `allowed_cidr` has drifted —
-  dynamic home/ISP IPs change, and both 443 and 22 are scoped to it.
-  Confusingly, SSH can keep working even when HTTPS doesn't (some ISPs'
-  CGNAT routes different connections out different egress IPs), so "SSH
-  still works" isn't proof `allowed_cidr` is current. Compare `curl -s
+- **You specifically can't SSH in (timeout), but `check-readiness.sh` run
+  from elsewhere / the site itself loads fine**: your `allowed_cidr` has
+  drifted — dynamic home/ISP IPs change, and SSH (22) is the one thing
+  still scoped to it (443/80 are world-open, see "Scope discipline"
+  above, precisely so this can't lock out players). Compare `curl -s
   https://checkip.amazonaws.com` against `allowed_cidr` in
   `terraform.tfvars`; if they differ, update it and `terraform apply`
   (NSG-only change, ~1s, no instance impact, no capacity risk).
+- **A teammate reports "this site can't be reached" but the site loads
+  fine for you**: this is exactly what an `allowed_cidr`-scoped 443 used
+  to look like (fixed 2026-08-28 — 443 is world-open now, see above) — if
+  you're on an older deploy of this range, or narrowed 443 back down for
+  some reason, that's almost certainly it. Confirm the server itself is
+  healthy first (`check-readiness.sh`), then check the relevant NSG rule's
+  `source` isn't scoped to a CIDR that excludes them.
 - **`terraform plan`/`apply` wants to change `source_details` on either
   instance for no reason you changed**: harmless data-source drift
   (`data.oci_core_images` always fetches whichever Ubuntu image is
