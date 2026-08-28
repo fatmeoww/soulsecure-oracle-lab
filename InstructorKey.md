@@ -197,6 +197,42 @@ the student was assigned:
 
 ## Known limitations / honest caveats
 
+- **`allowed_cidr` drift caused a real "is the range down?" scare,
+  2026-08-27 — turned out to be nothing wrong with the range at all.**
+  The operator's home IP had changed again (dynamic ISP IP, the same
+  class of drift documented further below), so port 443 (scoped to
+  `allowed_cidr`) silently stopped accepting connections from the new IP
+  — but SSH (port 22, same `allowed_cidr`) kept working, exactly the
+  CGNAT/dynamic-routing quirk already documented below, which made it
+  briefly look server-side. Diagnosed properly this time: server-side
+  health checked first (`ss -tlnp` showed nginx listening on both
+  0.0.0.0:443/:80, a local `curl 127.0.0.1` returned 200, host iptables
+  allowed both ports) *before* touching anything — confirming the range
+  itself was completely healthy, then compared `curl checkip.amazonaws.com`
+  against `terraform.tfvars`'s `allowed_cidr` to find the actual mismatch.
+  Fixed with an `allowed_cidr`-only `terraform apply` (NSG rule update,
+  no instance impact).
+  While applying that unrelated one-line fix, hit a **second, genuinely
+  unrelated bug**: `terraform apply` also tried to update both instances'
+  `source_details.source_id` in place and failed with a confusing
+  `sourceDetails.kmsKeyId size must be between 1 and 255` error. Root
+  cause: `data.oci_core_images` always fetches whichever Ubuntu 22.04
+  image is currently newest, so its result can differ between one `plan`
+  and the next purely because Oracle published a new image — and OCI's
+  API doesn't actually support changing a running instance's boot image
+  in place, so the attempt just fails (with a genuinely unhelpful,
+  seemingly-unrelated error, likely a provider-version quirk — the error
+  itself noted this provider is "114 updates behind current"). Both
+  instances were completely unaffected (the API call failed before
+  changing anything — confirmed via unchanged `uptime` and all services
+  still `active` on both boxes). Fixed for good with `lifecycle {
+  ignore_changes = [source_details] }` on both `oci_core_instance`
+  resources in `compute.tf` — `source_id` should only ever matter at
+  initial launch anyway; `terraform plan` shows clean afterward.
+  **Takeaway for next time something looks like the range is "down":
+  check server-side health directly over SSH first** (services, local
+  curl, host firewall) **before assuming anything's actually broken** —
+  in both incidents here, the range itself was fine the whole time.
 - **Removed the last hardcoded/baked-in private IP from the whole range,
   2026-08-27, and added a `check-readiness.sh` health check alongside the
   hourly reset.** Prompted by wanting to never again be caught out by an

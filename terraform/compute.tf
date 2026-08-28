@@ -100,6 +100,23 @@ resource "oci_core_instance" "web01" {
     source_id   = local.web01_image_id
   }
 
+  # data.oci_core_images always fetches whatever Ubuntu 22.04 image is
+  # currently newest, so its result can change between one `terraform
+  # plan` and the next just because Oracle published a new image -- with
+  # no ignore_changes, that drift makes Terraform try to update a running
+  # instance's boot image in place, which OCI's API doesn't actually
+  # support cleanly (hit this for real: a routine allowed_cidr-only apply
+  # unexpectedly also tried this and failed with an unrelated-looking
+  # `sourceDetails.kmsKeyId size must be between 1 and 255` error -- a
+  # provider quirk when it attempts an update the API rejects). The
+  # instance was left completely unaffected since the API call itself
+  # failed, but there's no reason to let this class of drift threaten an
+  # otherwise-unrelated apply again. source_id should only ever matter at
+  # initial launch anyway.
+  lifecycle {
+    ignore_changes = [source_details]
+  }
+
   metadata = {
     ssh_authorized_keys = var.admin_ssh_public_key
     # gzip+base64, not plain base64 -- the app is a full multi-page site now
@@ -187,6 +204,12 @@ resource "oci_core_instance" "internal01" {
   source_details {
     source_type = "image"
     source_id   = local.ubuntu_image_id
+  }
+
+  # See the matching comment on oci_core_instance.web01 -- same
+  # always-fetches-latest data source drift, same fix.
+  lifecycle {
+    ignore_changes = [source_details]
   }
 
   metadata = {

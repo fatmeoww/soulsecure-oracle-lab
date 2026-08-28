@@ -329,6 +329,46 @@ bash terraform/reset.sh internal01   # just internal-01
 
 ---
 
+## Troubleshooting: "is the range actually down?"
+
+Before assuming anything is actually broken, check server-side health
+directly over SSH first — in every real incident this range has hit so
+far, it turned out to still be completely healthy:
+
+```bash
+ssh cloudbreach-web01 "sudo /opt/check-readiness.sh"
+```
+All 8 checks OK / `READY` means the range itself is fine — the problem is
+almost always something else, most commonly:
+
+- **Browser shows "Not secure"**: expected if `web-01` was redeployed
+  more than a couple of times in the last week — Let's Encrypt's rate
+  limit (5 certs/identifier/week) kicked in and it's serving its
+  self-signed fallback cert instead. The site still works; only the cert
+  is untrusted. Confirm with
+  `ssh cloudbreach-web01 "echo | openssl s_client -connect localhost:443 2>/dev/null | openssl x509 -noout -issuer"`
+  — issuer `SoulSecure Inc.` = self-signed fallback, issuer `Let's Encrypt`
+  = the real thing. It does **not** fix itself with time alone (certbot
+  only runs at boot, and there's no existing Let's Encrypt cert for a
+  renewal timer to renew) — once the rate-limit window has passed, either
+  redeploy `web-01` again or just re-run Certbot directly over SSH:
+  `ssh cloudbreach-web01 "sudo certbot --nginx -d soulsecure.duckdns.org --non-interactive --agree-tos -m admin@soulsecure.duckdns.org --redirect"`.
+- **Can't reach the site (timeout) from your own machine, but
+  `check-readiness.sh` says READY**: your `allowed_cidr` has drifted —
+  dynamic home/ISP IPs change, and both 443 and 22 are scoped to it.
+  Confusingly, SSH can keep working even when HTTPS doesn't (some ISPs'
+  CGNAT routes different connections out different egress IPs), so "SSH
+  still works" isn't proof `allowed_cidr` is current. Compare `curl -s
+  https://checkip.amazonaws.com` against `allowed_cidr` in
+  `terraform.tfvars`; if they differ, update it and `terraform apply`
+  (NSG-only change, ~1s, no instance impact, no capacity risk).
+- **`terraform plan`/`apply` wants to change `source_details` on either
+  instance for no reason you changed**: harmless data-source drift
+  (`data.oci_core_images` always fetches whichever Ubuntu image is
+  currently newest) that's ignored via `lifecycle.ignore_changes` in
+  `compute.tf` — if you ever see it anyway, see InstructorKey.md's Known
+  Limitations for the full story.
+
 ## Moving to a different account or region
 
 This range has already been moved once for real — `ap-singapore-1` ran out
